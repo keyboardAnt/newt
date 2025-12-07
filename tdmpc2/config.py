@@ -93,8 +93,8 @@ class Config:
 	simnorm_dim: int = 8
 
 	# logging
-	wandb_project: str = "<project>"
-	wandb_entity: str = "<user>"
+	wandb_project: str = "mmbench"
+	wandb_entity: str = "wm-planning"
 	enable_wandb: bool = True
 
 	# misc
