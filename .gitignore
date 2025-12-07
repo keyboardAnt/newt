@@ -3,6 +3,10 @@ outputs/
 logs/
 .vscode/
 
+# HF checkpoints
+tdmpc2/hf_checkpoints/*
+!tdmpc2/hf_checkpoints/.gitkeep
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
