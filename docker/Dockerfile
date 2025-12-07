@@ -42,6 +42,10 @@ RUN pip install --no-cache-dir \
 RUN python -c "exec('import sapien.physx as physx;\ntry:\n  physx.enable_gpu()\nexcept:\n  pass;')"
 
 # copy maniskill assets to avoid repeatedly downloading
+# NOTE: The `.maniskill` folder under `docker/` is included in the build context
+# and is empty by default (only a `.gitkeep` file). If you have pre-downloaded
+# ManiSkill assets, place them in `docker/.maniskill/` before building and they
+# will be baked into the image.
 COPY .maniskill /root/.maniskill
 
 # misc environment variables for convenience

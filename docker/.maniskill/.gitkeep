@@ -1,0 +1,3 @@
+Placeholder file so that the `.maniskill` directory always exists in the
+build context. You can put ManiSkill assets in this directory locally
+without committing them, and they will be copied into the image.
