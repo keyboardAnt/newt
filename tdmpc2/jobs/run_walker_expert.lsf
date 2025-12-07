@@ -1,0 +1,26 @@
+#!/bin/bash
+#BSUB -J newt-walker-expert          # job name
+#BSUB -q long-gpu                    # GPU batch queue on this cluster
+#BSUB -n 1                           # 1 CPU core (single LSF task on one host)
+#BSUB -gpu "num=1"                   # 1 GPU on that host
+#BSUB -R "rusage[mem=32GB]"          # 32 GB RAM total (mem is per task; here -n 1)
+#BSUB -W 48:00                        # walltime (48 hours)
+#BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-walker-expert.%J.out
+#BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-walker-expert.%J.err
+
+# Run in Docker container with GPU support
+#BSUB -app nvidia-gpu
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0"
+
+cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
+
+python train.py \
+  task=walker-walk \
+  model_size=B \
+  steps=5000000 \
+  num_envs=2 \
+  use_demos=False \
+  tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
+  exp_name=expert_run \
+  save_video=False \
+  compile=False
