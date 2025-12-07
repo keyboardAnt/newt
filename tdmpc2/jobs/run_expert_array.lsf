@@ -1,0 +1,32 @@
+#!/bin/bash
+#BSUB -J newt-expert[1-200]%10        # 200 jobs (one per task), max 10 running at once
+#BSUB -q long-gpu                     # GPU batch queue on this cluster
+#BSUB -n 1                            # 1 CPU core
+#BSUB -gpu "num=1"                    # 1 GPU
+#BSUB -R "rusage[mem=32GB]"           # 32 GB RAM total
+#BSUB -W 48:00                        # walltime (48 hours)
+#BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log
+#BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log
+
+# Run in Docker container with GPU support
+#BSUB -app nvidia-gpu
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0"
+
+cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
+
+# Select this array job's task from the 200-task list (1-based index)
+TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
+echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
+
+python train.py \
+  task="${TASK}" \
+  model_size=B \
+  steps=5000000 \
+  num_envs=2 \
+  use_demos=False \
+  tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
+  exp_name="expert_${TASK}" \
+  save_video=False \
+  compile=False
+
+
