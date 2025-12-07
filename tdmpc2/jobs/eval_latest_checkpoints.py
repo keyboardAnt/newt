@@ -61,7 +61,7 @@ def main() -> None:
             "use_demos=False",
             f"tasks_fp={str(tasks_fp)}",
             f"exp_name={eval_exp_name}",
-            "save_video=False",  # avoid moviepy dependency; enable manually if desired
+            "save_video=True",
             "env_mode=sync",
             "compile=False",
         ]
