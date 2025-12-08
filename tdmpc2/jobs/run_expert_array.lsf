@@ -1,5 +1,5 @@
 #!/bin/bash
-#BSUB -J newt-expert[1-200]        # 200 jobs (one per task)
+#BSUB -J newt-expert[1-200]           # 200 jobs (one per task)
 #BSUB -q long-gpu                     # GPU batch queue on this cluster
 #BSUB -n 1                            # 1 CPU core
 #BSUB -gpu "num=1"                    # 1 GPU
@@ -13,6 +13,9 @@
 #BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0"
 
 cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
+
+# Ensure video deps for wandb.Video (moviepy, imageio-ffmpeg)
+pip install -q "wandb[media]"
 
 # Select this array job's task from the 200-task list (1-based index)
 TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
