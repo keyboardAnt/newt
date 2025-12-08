@@ -1,0 +1,65 @@
+#!/bin/bash
+# Evaluate the latest checkpoint per task with video logging (wandb.Video).
+# One array element per task listed in jobs/tasks_soup.txt.
+
+#BSUB -J newt-eval[1-200]               # 200 jobs (one per task)
+#BSUB -q long-gpu                       # GPU batch queue
+#BSUB -n 1                              # 1 CPU core
+#BSUB -gpu "num=1"                      # 1 GPU
+#BSUB -R "rusage[mem=16GB]"             # 16 GB RAM
+#BSUB -W 04:00                          # walltime per eval job
+#BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval.%J.%I.log
+#BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval.%J.%I.log
+
+# Run inside the Docker image (must already be built and pushed)
+#BSUB -app nvidia-gpu
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0"
+
+cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
+
+# Ensure wandb video deps are present (moviepy, ffmpeg bindings)
+pip install -q "wandb[media]"
+
+# Select the task for this array index (1-based)
+TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
+echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
+
+# Find the latest checkpoint for this task; skip if none exists.
+eval $(python - <<'PY'
+from pathlib import Path
+from jobs.eval_latest_checkpoints import parse_step
+
+task = Path("${TASK}")
+logs_dir = Path("logs") / task
+candidates = sorted(logs_dir.glob("*/*/models/*.pt"))
+if not candidates:
+    print('CKPT=')
+    print('EXP=')
+else:
+    best = max(candidates, key=parse_step)
+    exp = best.parent.parent.name  # logs/<task>/<seed>/<exp_name>/models/<ckpt>.pt
+    print(f'CKPT="{best}"')
+    print(f'EXP="eval_{exp}_{best.stem}"')
+PY
+)
+
+if [ -z "${CKPT}" ]; then
+  echo "No checkpoint found for task '${TASK}', skipping."
+  exit 0
+fi
+
+echo "Evaluating checkpoint: ${CKPT}"
+
+python train.py \
+  task="${TASK}" \
+  model_size=B \
+  checkpoint="${CKPT}" \
+  steps=1 \
+  num_envs=2 \
+  use_demos=False \
+  tasks_fp=/home/projects/dharel/nadavt/tasks.json \
+  exp_name="${EXP}" \
+  save_video=True \
+  env_mode=sync \
+  compile=False
+
