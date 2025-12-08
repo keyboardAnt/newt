@@ -1,5 +1,5 @@
 #!/bin/bash
-#BSUB -J newt-expert[1-200]%10        # 200 jobs (one per task), max 10 running at once
+#BSUB -J newt-expert[1-200]        # 200 jobs (one per task)
 #BSUB -q long-gpu                     # GPU batch queue on this cluster
 #BSUB -n 1                            # 1 CPU core
 #BSUB -gpu "num=1"                    # 1 GPU
@@ -26,7 +26,5 @@ python train.py \
   use_demos=False \
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
   exp_name="expert_${TASK}" \
-  save_video=False \
+  save_video=True \
   compile=False
-
-
