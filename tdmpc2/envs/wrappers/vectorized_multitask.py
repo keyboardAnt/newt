@@ -152,10 +152,18 @@ class VectorizedMultitaskWrapper(gym.Wrapper):
 	
 	def render(self, *args, **kwargs):
 		frames = []
-		for env in self.env.envs:
-			frame = env.render(*args, **kwargs)
-			if frame is not None:
-				frames.append(torch.from_numpy(frame))
+		# AsyncVectorEnv instances run environments in separate processes and do not expose
+		# an `envs` attribute. Use the vector API to fetch renders from each worker.
+		if isinstance(self.env, AsyncVectorEnv):
+			results = self.env.call("render", *args, **kwargs)
+			for frame in results:
+				if frame is not None:
+					frames.append(torch.from_numpy(frame))
+		else:
+			for env in getattr(self.env, "envs", []):
+				frame = env.render(*args, **kwargs)
+				if frame is not None:
+					frames.append(torch.from_numpy(frame))
 		return torch.cat(frames, dim=1) if len(frames) > 0 else None
 
 
