@@ -45,8 +45,10 @@ def find_best_runs(logs_dir: Path, min_step: int) -> list[dict]:
         if step < min_step:
             continue
         
-        # Get videos for this run
+        # Get videos for this run (check both standard and wandb locations)
         videos = sorted(exp_dir.glob("videos/*.mp4"))
+        if not videos:
+            videos = sorted(exp_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
         
         if task not in task_best or step > task_best[task]['step']:
             task_best[task] = {

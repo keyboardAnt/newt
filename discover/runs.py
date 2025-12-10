@@ -63,9 +63,15 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         seed_dir = exp_dir.parent
         task_dir = seed_dir.parent
 
+        # Look for videos in both standard location and wandb media directory
         videos = sorted(
             str(p.resolve()) for p in exp_dir.glob("videos/*.mp4")
         )
+        if not videos:
+            # Also check wandb media directory
+            videos = sorted(
+                str(p.resolve()) for p in exp_dir.glob("wandb/run-*/files/media/videos/**/*.mp4")
+            )
         config_path = exp_dir / "config.yaml"
         wandb_id_path = exp_dir / "wandb_run_id.txt"
 

@@ -25,11 +25,14 @@ TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 
 # Find the latest checkpoint for this task; skip if none exists.
+# Pass task via environment variable since heredoc is single-quoted
+export TASK
 eval $(python - <<'PY'
+import os
 from pathlib import Path
 from jobs.eval_latest_checkpoints import parse_step
 
-task = Path("${TASK}")
+task = os.environ.get("TASK", "")
 logs_dir = Path("logs") / task
 candidates = sorted(logs_dir.glob("*/*/models/*.pt"))
 if not candidates:
