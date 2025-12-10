@@ -59,6 +59,65 @@ We recommend using default hyperparameters, including the default model size of 
 
 ----
 
+## Monitoring Training Progress
+
+The `discover/` module provides tools for monitoring training runs, tracking progress, and collecting results.
+
+### Run Discovery CLI
+
+Discover runs from local logs or Weights & Biases:
+
+```bash
+# Scan local logs
+python discover/runs.py logs tdmpc2/logs --print
+
+# Fetch runs from W&B
+python discover/runs.py wandb <entity/project> --print --limit 100
+
+# Save to file
+python discover/runs.py logs tdmpc2/logs --save runs.parquet
+```
+
+### Interactive Notebook
+
+The `discover/browse_runs.ipynb` notebook provides interactive visualization and analysis:
+
+- **Training Progress Overview**: Histogram, pie chart, and cumulative distribution of training progress
+- **Per-Task Progress**: Bar chart showing max step reached per task with color coding (completed/in-progress/not-started)
+- **Domain Analysis**: Aggregate progress by task domain (e.g., `walker-*`, `atari-*`)
+- **Tasks Requiring Attention**: Identify crashed, stuck, or lagging tasks
+- **Video Management**: Find tasks ready for evaluation and collect videos for presentation
+
+### Collecting Videos for Presentation
+
+After training, collect videos from tasks that are at least 50% trained:
+
+```bash
+# Collect videos (creates symlinks)
+python discover/collect_videos.py --min-progress 0.5
+
+# Copy files instead of symlinks
+python discover/collect_videos.py --copy --output ./my_videos
+
+# Download to laptop
+rsync -avz <server>:discover/videos_for_presentation/ ./presentation_videos/
+```
+
+### Running Evaluation for Videos
+
+Generate videos for trained tasks that don't have them yet:
+
+```bash
+# From the notebook, generates:
+#   tdmpc2/jobs/tasks_need_eval.txt - list of tasks
+#   tdmpc2/jobs/run_eval_need_videos.lsf - LSF job script
+
+# Submit eval jobs
+cd tdmpc2 && bsub < jobs/run_eval_need_videos.lsf
+```
+
+----
+
 ## Citation
 
 If you find our work useful, please consider citing our paper as follows:
