@@ -27,6 +27,7 @@ dependencies:
     - mujoco==3.3.6
     - numpy==1.24.4
     - pandas
+    - mathplotlib
     - ipykernel
     - robodesk==1.0.0
     - ogbench==1.1.5
