@@ -8,7 +8,6 @@ dependencies:
   - pip=25.2
   - python=3.10
   - pip:
-    - ipykernel==6.29.5
     - dm-control==1.0.34
     - glfw==2.10.0
     - gymnasium==0.29.1
@@ -27,7 +26,8 @@ dependencies:
     - mani_skill-nightly==2025.9.19.39
     - mujoco==3.3.6
     - numpy==1.24.4
-    - pandas==2.2.3
+    - pandas
+    - ipykernel
     - robodesk==1.0.0
     - ogbench==1.1.5
     - swig==4.3.1
