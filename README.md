@@ -61,59 +61,33 @@ We recommend using default hyperparameters, including the default model size of 
 
 ## Monitoring Training Progress
 
-The `discover/` module provides tools for monitoring training runs, tracking progress, and collecting results.
+The `discover/` module provides tools for monitoring training runs, tracking progress, and collecting results. See [`discover/README.md`](discover/README.md) for full documentation.
 
-### Run Discovery CLI
+**Quick start:**
 
-Discover runs from local logs or Weights & Biases:
+```python
+from pathlib import Path
+from discover import RunsCache, training_overview
+
+cache = RunsCache(
+    logs_dir=Path('tdmpc2/logs'),
+    cache_path=Path('discover/runs_cache.parquet'),
+    wandb_project='<entity/project>',
+)
+df, _, _ = cache.load()
+training_overview(df, target_step=5_000_000)
+```
+
+Or use the interactive notebook: `discover/browse_runs.ipynb`
+
+**CLI tools:**
 
 ```bash
-# Scan local logs
+# Discover runs from local logs or W&B
 python discover/runs.py logs tdmpc2/logs --print
 
-# Fetch runs from W&B
-python discover/runs.py wandb <entity/project> --print --limit 100
-
-# Save to file
-python discover/runs.py logs tdmpc2/logs --save runs.parquet
-```
-
-### Interactive Notebook
-
-The `discover/browse_runs.ipynb` notebook provides interactive visualization and analysis:
-
-- **Training Progress Overview**: Histogram, pie chart, and cumulative distribution of training progress
-- **Per-Task Progress**: Bar chart showing max step reached per task with color coding (completed/in-progress/not-started)
-- **Domain Analysis**: Aggregate progress by task domain (e.g., `walker-*`, `atari-*`)
-- **Tasks Requiring Attention**: Identify crashed, stuck, or lagging tasks
-- **Video Management**: Find tasks ready for evaluation and collect videos for presentation
-
-### Collecting Videos for Presentation
-
-After training, collect videos from tasks that are at least 50% trained:
-
-```bash
-# Collect videos (creates symlinks)
+# Collect videos from trained tasks
 python discover/collect_videos.py --min-progress 0.5
-
-# Copy files instead of symlinks
-python discover/collect_videos.py --copy --output ./my_videos
-
-# Download to laptop
-rsync -avz <server>:discover/videos_for_presentation/ ./presentation_videos/
-```
-
-### Running Evaluation for Videos
-
-Generate videos for trained tasks that don't have them yet:
-
-```bash
-# From the notebook, generates:
-#   tdmpc2/jobs/tasks_need_eval.txt - list of tasks
-#   tdmpc2/jobs/run_eval_need_videos.lsf - LSF job script
-
-# Submit eval jobs
-cd tdmpc2 && bsub < jobs/run_eval_need_videos.lsf
 ```
 
 ----
