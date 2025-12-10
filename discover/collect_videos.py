@@ -14,13 +14,14 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import List, Dict
 
 # Add parent to path for imports
 import sys
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from discover.runs import discover_local_logs
+from discover.eval import find_task_videos
 
 
 def parse_step(path: Path) -> int:
@@ -31,9 +32,9 @@ def parse_step(path: Path) -> int:
         return 0
 
 
-def find_best_runs(logs_dir: Path, min_step: int) -> list[dict]:
+def find_best_runs(logs_dir: Path, min_step: int) -> List[Dict]:
     """Find the best (highest step) run for each task that meets the threshold."""
-    task_best: dict[str, dict] = {}
+    task_best: Dict[str, Dict] = {}
     
     for ckpt in logs_dir.glob("*/*/*/models/*.pt"):
         exp_dir = ckpt.parent.parent
@@ -45,19 +46,17 @@ def find_best_runs(logs_dir: Path, min_step: int) -> list[dict]:
         if step < min_step:
             continue
         
-        # Get videos for this run (check both standard and wandb locations)
-        videos = sorted(exp_dir.glob("videos/*.mp4"))
-        if not videos:
-            videos = sorted(exp_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
-        
         if task not in task_best or step > task_best[task]['step']:
             task_best[task] = {
                 'task': task,
                 'step': step,
                 'ckpt_path': str(ckpt),
                 'exp_dir': str(exp_dir),
-                'videos': [str(v) for v in videos]
             }
+    
+    # Add videos for each task
+    for task, info in task_best.items():
+        info['videos'] = find_task_videos(task, logs_dir)
     
     return list(task_best.values())
 

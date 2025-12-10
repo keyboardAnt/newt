@@ -1,6 +1,6 @@
 #!/bin/bash
 # Auto-generated eval script for tasks needing videos
-# Generated: 2025-12-10T07:45:27.902189
+# Generated: 2025-12-10T07:50:55.140096
 # Tasks: 1
 
 #BSUB -J newt-eval-videos[1-1]
@@ -19,11 +19,9 @@ cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 
 pip install -q "wandb[media]"
 
-# Select the task for this array index
 TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_need_eval.txt)
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 
-# Find the latest checkpoint (pass task via environment variable)
 export TASK
 eval $(python - <<'PY'
 import os
@@ -58,7 +56,7 @@ python train.py \
   steps=1 \
   num_envs=2 \
   use_demos=False \
-  tasks_fp=/home/projects/dharel/nadavt/tasks.json \
+  tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
   exp_name="${EXP}" \
   save_video=True \
   env_mode=sync \
