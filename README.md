@@ -81,6 +81,15 @@ The job scripts in `tdmpc2/jobs/` are configured for multi-queue submission:
 
 This allows jobs to use up to 180 GPUs in parallel (via `short-gpu`) instead of being capped at 70 (`long-gpu`). Jobs that get preempted are automatically requeued and resume from their last checkpoint.
 
+**Interactive session:**
+
+To launch an interactive GPU session with the Docker container:
+
+```bash
+cd tdmpc2
+./jobs/interactive.sh
+```
+
 ----
 
 ## Monitoring Training Progress
