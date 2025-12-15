@@ -1,10 +1,11 @@
 #!/bin/bash
 #BSUB -J newt-expert[1-200]           # 200 jobs (one per task)
-#BSUB -q long-gpu                     # GPU batch queue on this cluster
+#BSUB -q "short-gpu long-gpu"         # Multi-queue: try short-gpu first (180 GPU limit), fallback to long-gpu (70 GPU limit)
 #BSUB -n 1                            # 1 CPU core
 #BSUB -gpu "num=1"                    # 1 GPU
 #BSUB -R "rusage[mem=32GB]"           # 32 GB RAM total
-#BSUB -W 48:00                        # walltime (48 hours)
+#BSUB -W 5:45                         # walltime under 6h for short-gpu compatibility
+#BSUB -r                              # Requeue job on preemption (auto-resume will reload checkpoint)
 #BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log
 #BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log
 

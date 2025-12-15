@@ -4,6 +4,8 @@ os.environ['LAZY_LEGACY_OP'] = '0'
 os.environ["TORCH_DISTRIBUTED_TIMEOUT"] = "1800"
 os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = "1"
 os.environ['TORCH_LOGS'] = "+recompiles"
+import signal
+import sys
 import warnings
 warnings.filterwarnings('ignore')
 from copy import deepcopy
@@ -111,6 +113,18 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 		buffer=buffer,
 		logger=Logger(cfg),
 	)
+
+	# Register signal handlers for graceful preemption (LSF uses SIGTERM/SIGUSR2)
+	def handle_preemption(signum, frame):
+		sig_name = signal.Signals(signum).name
+		print(colored(f'[Rank {cfg.rank}] Received {sig_name}, saving checkpoint...', 'yellow', attrs=['bold']))
+		trainer.save_checkpoint()
+		print(colored(f'[Rank {cfg.rank}] Checkpoint saved, exiting.', 'yellow', attrs=['bold']))
+		sys.exit(0)
+
+	signal.signal(signal.SIGTERM, handle_preemption)
+	signal.signal(signal.SIGUSR2, handle_preemption)  # LSF preemption signal
+
 	barrier()  # Ensure all processes are ready before starting training
 	try:
 		trainer.train()
@@ -121,6 +135,7 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 		raise  # Propagate the exception so it isn't swallowed
 	except KeyboardInterrupt:
 		print(colored(f'[Rank {cfg.rank}] Training interrupted by user (Ctrl+C)', 'red', attrs=['bold']))
+		trainer.save_checkpoint()
 		raise  # Optional: raise again if you want the shell to show KeyboardInterrupt
 	finally:
 		print(colored('Training interrupted', 'red', attrs=['bold']))
