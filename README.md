@@ -71,15 +71,18 @@ Training automatically supports checkpoint-based resumption. If a job is interru
 
 **LSF cluster usage:**
 
-The job scripts in `tdmpc2/jobs/` are configured for multi-queue submission:
+To run all 200 expert jobs with maximum parallelism (180 + 20 GPUs):
 
 ```bash
-#BSUB -q "short-gpu long-gpu"   # Try short-gpu first (higher GPU limit)
-#BSUB -W 5:45                    # Under 6h for short-gpu compatibility
-#BSUB -r                         # Requeue on preemption
+cd tdmpc2
+./jobs/submit_expert_array.sh
 ```
 
-This allows jobs to use up to 180 GPUs in parallel (via `short-gpu`) instead of being capped at 70 (`long-gpu`). Jobs that get preempted are automatically requeued and resume from their last checkpoint.
+This splits jobs across queues:
+- Jobs 1-180 → `short-gpu` (180 GPU limit)
+- Jobs 181-200 → `long-gpu` (70 GPU limit)
+
+Jobs that get preempted are automatically requeued (`-r` flag) and resume from their last checkpoint.
 
 **Interactive session:**
 
