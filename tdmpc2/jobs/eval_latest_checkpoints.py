@@ -13,12 +13,7 @@ Tasks without any checkpoints are skipped with a log message.
 import subprocess
 from pathlib import Path
 
-
-def parse_step(path: Path) -> int:
-    """Parse an integer step from a checkpoint filename like '600_000.pt'."""
-    stem = path.stem  # e.g. '600_000'
-    # Remove underscores so 600_000 -> 600000
-    return int(stem.replace("_", ""))
+from discover import parse_step
 
 
 def main() -> None:

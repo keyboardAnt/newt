@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     import pandas as pd
+
+
+def parse_step(path: Union[str, Path]) -> int:
+    """Parse step number from checkpoint filename (e.g., '1_000_000.pt' -> 1000000)."""
+    stem = Path(path).stem
+    return int(stem.replace('_', '').replace(',', ''))
 
 
 def require_pandas():

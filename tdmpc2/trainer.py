@@ -1,5 +1,6 @@
 import os
 from collections import defaultdict, OrderedDict
+from pathlib import Path
 from time import time
 
 import torch
@@ -7,6 +8,8 @@ import numpy as np
 from termcolor import colored
 from tqdm import tqdm
 from tensordict.tensordict import TensorDict
+
+from discover import parse_step
 
 from common import barrier
 
@@ -58,6 +61,45 @@ class Trainer():
 			elapsed_time=elapsed_time,
 			steps_per_second=self._step / elapsed_time
 		)
+
+	def save_checkpoint(self, identifier=None):
+		"""Save a checkpoint for resuming training later."""
+		if identifier is None:
+			identifier = f'{self._step:,}'.replace(',', '_')
+		
+		# Save agent (model, optimizers, scale)
+		self.logger.save_agent(self.agent, identifier)
+		
+		# Save trainer state (only on rank 0 where model_dir exists)
+		if hasattr(self.logger, '_model_dir') and self.logger._model_dir:
+			state_path = Path(self.logger._model_dir) / f'{identifier}_trainer.pt'
+			torch.save({
+				'step': self._step,
+				'ep_idx': self._ep_idx,
+			}, state_path)
+			if self.cfg.rank == 0:
+				print(colored(f'Saved checkpoint at step {self._step}.', 'green', attrs=['bold']))
+
+	def load_checkpoint(self, checkpoint_path):
+		"""Load a checkpoint to resume training."""
+		checkpoint_path = Path(checkpoint_path)
+		
+		# Load agent with optimizer states
+		self.agent.load(checkpoint_path, resume=True)
+		
+		# Load trainer state
+		trainer_state_path = checkpoint_path.parent / f'{checkpoint_path.stem}_trainer.pt'
+		if trainer_state_path.exists():
+			state = torch.load(trainer_state_path, weights_only=True)
+			self._step = state['step']
+			self._ep_idx = state['ep_idx']
+		else:
+			# Fallback: parse step from filename
+			self._step = parse_step(checkpoint_path)
+			self._ep_idx = 0
+		
+		if self.cfg.rank == 0:
+			print(colored(f'Resumed from checkpoint at step {self._step}.', 'blue', attrs=['bold']))
 
 	def eval(self):
 		"""Evaluate agent and aggregate all completed episodes per unique task name."""
@@ -176,21 +218,33 @@ class Trainer():
 		# Load demonstrations
 		use_demos = self.cfg.get('use_demos', False)
 		
-		# Load checkpoint
+		# Load checkpoint (explicit or auto-resume from work_dir)
 		checkpoint = self.cfg.get('checkpoint', None)
+		resumed = False
+		
 		if checkpoint:
+			# Explicit checkpoint provided
 			if not os.path.exists(checkpoint):
 				raise FileNotFoundError(f'Checkpoint file not found: {checkpoint}')
 			self.agent.load(self.cfg.checkpoint)
 			if self.cfg.rank == 0:
 				print(colored(f'Loaded checkpoint from {self.cfg.checkpoint}.', 'blue', attrs=['bold']))
 		else:
-			checkpoint = None
-			if self.cfg.rank == 0:
+			# Auto-resume: find latest checkpoint in work_dir/models
+			ckpt_dir = Path(self.cfg.work_dir) / 'models'
+			if ckpt_dir.exists():
+				# Find checkpoint files (exclude trainer state files)
+				checkpoints = [p for p in ckpt_dir.glob('*.pt') if not p.stem.endswith('_trainer')]
+				if checkpoints:
+					latest_ckpt = max(checkpoints, key=parse_step)
+					self.load_checkpoint(latest_ckpt)
+					resumed = True
+			
+			if not resumed and self.cfg.rank == 0:
 				print(colored(f'No checkpoint found, training from scratch.', 'yellow', attrs=['bold']))
 		
-		# Pretrain agent on demonstrations if available
-		if use_demos and not checkpoint and self.cfg.demo_steps > 0:
+		# Pretrain agent on demonstrations if available (skip if resuming or explicit checkpoint)
+		if use_demos and not checkpoint and not resumed and self.cfg.demo_steps > 0:
 			if self.cfg.rank == 0:
 				print('Pretraining agent on demonstrations...')
 			self.agent.maxq_pi = False  # Disable max-Q for pretraining

@@ -76,24 +76,31 @@ class TDMPC2(torch.nn.Module):
 			"scale": self.scale.state_dict(),
 		}, fp)
 
-	def load(self, fp):
+	def load(self, fp, resume=False):
 		"""
 		Load a saved state dict from filepath (or dictionary) into current agent.
 
 		Args:
 			fp (str): Filepath to load state dict from.
+			resume (bool): If True, also restore optimizer and scale states for resuming training.
 		"""
-		state_dict = torch.load(fp, map_location=torch.get_default_device(), weights_only=False)
-		state_dict = state_dict["model"] if "model" in state_dict else state_dict
+		checkpoint = torch.load(fp, map_location=torch.get_default_device(), weights_only=False)
+		model_state = checkpoint["model"] if "model" in checkpoint else checkpoint
 		
 		# Retain task_emb and action_masks if finetuning
 		if self.cfg.finetune:
-			prefix = "module." if "module._task_emb.weight" in state_dict else ""
-			state_dict[prefix+"_task_emb.weight"] = self.model._task_emb.weight
-			state_dict[prefix+"_action_masks"] = self.model._action_masks
+			prefix = "module." if "module._task_emb.weight" in model_state else ""
+			model_state[prefix+"_task_emb.weight"] = self.model._task_emb.weight
+			model_state[prefix+"_action_masks"] = self.model._action_masks
 
-		state_dict = api_model_conversion(self.model.state_dict(), state_dict)
-		self.model.load_state_dict(state_dict)
+		model_state = api_model_conversion(self.model.state_dict(), model_state)
+		self.model.load_state_dict(model_state)
+
+		# Restore optimizer and scale states for resuming training
+		if resume and "optim" in checkpoint:
+			self.optim.load_state_dict(checkpoint["optim"])
+			self.pi_optim.load_state_dict(checkpoint["pi_optim"])
+			self.scale.load_state_dict(checkpoint["scale"])
 
 	@torch.no_grad()
 	def _pi(self, obs, task=None):

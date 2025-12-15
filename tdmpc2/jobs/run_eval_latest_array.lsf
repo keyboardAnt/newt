@@ -3,11 +3,11 @@
 # One array element per task listed in jobs/tasks_soup.txt.
 
 #BSUB -J newt-eval[1-200]               # 200 jobs (one per task)
-#BSUB -q long-gpu                       # GPU batch queue
+#BSUB -q "short-gpu long-gpu"           # Multi-queue: try short-gpu first (180 GPU limit)
 #BSUB -n 1                              # 1 CPU core
 #BSUB -gpu "num=1"                      # 1 GPU
 #BSUB -R "rusage[mem=16GB]"             # 16 GB RAM
-#BSUB -W 04:00                          # walltime per eval job
+#BSUB -W 04:00                          # walltime per eval job (under 6h for short-gpu)
 #BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval.%J.%I.log
 #BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval.%J.%I.log
 
@@ -30,11 +30,11 @@ export TASK
 eval $(python - <<'PY'
 import os
 from pathlib import Path
-from jobs.eval_latest_checkpoints import parse_step
+from discover import parse_step
 
 task = os.environ.get("TASK", "")
 logs_dir = Path("logs") / task
-candidates = sorted(logs_dir.glob("*/*/models/*.pt"))
+candidates = [p for p in logs_dir.glob("*/*/models/*.pt") if not p.stem.endswith('_trainer')]
 if not candidates:
     print('CKPT=')
     print('EXP=')

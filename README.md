@@ -59,9 +59,35 @@ We recommend using default hyperparameters, including the default model size of 
 
 ----
 
+## Resumable Training
+
+Training automatically supports checkpoint-based resumption. If a job is interrupted (e.g., by cluster preemption), it will automatically resume from the latest checkpoint when restarted.
+
+**How it works:**
+- Checkpoints are saved periodically to `logs/<task>/<seed>/<exp_name>/models/`
+- On startup, the trainer automatically finds and loads the latest checkpoint if one exists
+- Signal handlers (SIGTERM, SIGUSR2) save a checkpoint before the job exits
+- Optimizer states are preserved for seamless training continuation
+
+**LSF cluster usage:**
+
+```bash
+make interactive      # Launch interactive GPU session
+make submit-expert    # Submit all 200 expert training jobs
+make test-sanity      # Verify imports (run inside container)
+```
+
+`submit-expert` splits jobs across queues (long-gpu first for fewer interruptions):
+- Jobs 1-70 → `long-gpu` (70 GPU limit, 48h walltime)
+- Jobs 71-200 → `short-gpu` (130 jobs, 6h walltime with auto-resume)
+
+Jobs that get preempted are automatically requeued and resume from their last checkpoint.
+
+----
+
 ## Monitoring Training Progress
 
-The `discover/` module provides tools for monitoring training runs, tracking progress, and collecting results. See [`discover/README.md`](discover/README.md) for full documentation.
+The `discover/` module provides tools for monitoring training runs, tracking progress, and collecting results. See [`tdmpc2/discover/README.md`](tdmpc2/discover/README.md) for full documentation.
 
 **Quick start:**
 
@@ -70,7 +96,7 @@ from pathlib import Path
 from discover import RunsCache, training_overview
 
 cache = RunsCache(
-    logs_dir=Path('tdmpc2/logs'),
+    logs_dir=Path('logs'),
     cache_path=Path('discover/runs_cache.parquet'),
     wandb_project='<entity/project>',
 )
@@ -78,13 +104,13 @@ df, _, _ = cache.load()
 training_overview(df, target_step=5_000_000)
 ```
 
-Or use the interactive notebook: `discover/browse_runs.ipynb`
+Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 
-**CLI tools:**
+**CLI tools (run from `tdmpc2/`):**
 
 ```bash
 # Discover runs from local logs or W&B
-python discover/runs.py logs tdmpc2/logs --print
+python discover/runs.py logs logs --print
 
 # Collect videos from trained tasks
 python discover/collect_videos.py --min-progress 0.5

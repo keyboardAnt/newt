@@ -10,7 +10,7 @@ Modules:
 
 from .runs import discover_local_logs, discover_wandb_runs
 from .cache import RunsCache, load_all_runs
-from .analysis import best_step_by_task, attach_max_step, attach_runtime
+from .analysis import best_step_by_task, attach_max_step, attach_runtime, parse_step
 from .plots import training_overview, plot_max_steps, tasks_needing_attention, progress_by_domain
 from .eval import tasks_ready_for_eval, generate_eval_script, collect_videos
 
@@ -22,6 +22,7 @@ __all__ = [
     'RunsCache',
     'load_all_runs',
     # analysis
+    'parse_step',
     'best_step_by_task',
     'attach_max_step',
     'attach_runtime',
