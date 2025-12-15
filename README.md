@@ -90,6 +90,14 @@ cd tdmpc2
 ./jobs/interactive.sh
 ```
 
+**Sanity check:**
+
+To verify imports work correctly (run from inside the Docker container):
+
+```bash
+make test-sanity
+```
+
 ----
 
 ## Monitoring Training Progress
