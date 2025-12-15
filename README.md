@@ -88,6 +88,8 @@ This option may not always be available due to Docker Hub rate limits, but can b
 
 ## Example usage
 
+### Training
+
 Agents can be trained by running the `train.py` script. Below are some example commands:
 
 ```
@@ -101,6 +103,16 @@ $ python train.py checkpoint=<path>/<to>/<checkpoint>.pt    # <-- resume trainin
 We recommend using default hyperparameters, including the default model size of 20M parameters (`model_size=L`) for multitask experiments. For single-task experiments we recommend `model_size=B`. See `config.py` for a full list of arguments.
 
 If you would like to load one of our provided model checkpoints, you can download them from our [Hugging Face Models page](https://huggingface.co/nicklashansen/newt) and specify the path to the checkpoint using the `checkpoint` argument. Multitask checkpoints use a `soup` prefix in the filename, and model size is also specified in the filename (`S=2M`, `B=5M`, `L=20M`, `XL=80M`). You will need to use `model_size=B` when loading single-task checkpoints. We are actively working on better support for model loading and finetuning, so check back soon for updates!
+
+### Generating demonstrations
+
+You can generate demonstrations using a trained agent by running the `generate_demos.py` script. You will need to specify your checkpoint directory (`CHECKPOINT_PATH`) directly in the script, as well as `data_dir` (where to save the demos), `+num_demos` (number of successful demos to collect), and `task` (task to generate demos for). Below is an example command:
+
+```
+$ python generate_demos.py task=walker-walk +num_demos=10 data_dir=<path>/<to>/<data>
+```
+
+The script assumes that the agent used for generating demos is a single-task agent trained with default hyperparameters (e.g., any of our provided checkpoints).
 
 ----
 

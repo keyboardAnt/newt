@@ -76,6 +76,7 @@ def generate_demos(cfg):
 	cfg.num_envs = 2*cfg.num_demos  # Some episodes may be rejected
 	cfg.model_size = 'B'
 	cfg.save_video = True
+	cfg.compile = False
 	cfg = parse_cfg(cfg)
 	set_seed(cfg.seed)
 	assert len(cfg.tasks) == cfg.num_envs, \
