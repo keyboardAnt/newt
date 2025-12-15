@@ -71,35 +71,17 @@ Training automatically supports checkpoint-based resumption. If a job is interru
 
 **LSF cluster usage:**
 
-To run all 200 expert jobs with maximum parallelism (180 + 20 GPUs):
-
 ```bash
-cd tdmpc2
-./jobs/submit_expert_array.sh
+make interactive      # Launch interactive GPU session
+make submit-expert    # Submit all 200 expert training jobs
+make test-sanity      # Verify imports (run inside container)
 ```
 
-This splits jobs across queues:
+`submit-expert` splits jobs across queues for maximum parallelism:
 - Jobs 1-180 → `short-gpu` (180 GPU limit)
 - Jobs 181-200 → `long-gpu` (70 GPU limit)
 
-Jobs that get preempted are automatically requeued (`-r` flag) and resume from their last checkpoint.
-
-**Interactive session:**
-
-To launch an interactive GPU session with the Docker container:
-
-```bash
-cd tdmpc2
-./jobs/interactive.sh
-```
-
-**Sanity check:**
-
-To verify imports work correctly (run from inside the Docker container):
-
-```bash
-make test-sanity
-```
+Jobs that get preempted are automatically requeued and resume from their last checkpoint.
 
 ----
 
