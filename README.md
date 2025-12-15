@@ -77,9 +77,9 @@ make submit-expert    # Submit all 200 expert training jobs
 make test-sanity      # Verify imports (run inside container)
 ```
 
-`submit-expert` splits jobs across queues for maximum parallelism:
-- Jobs 1-180 → `short-gpu` (180 GPU limit)
-- Jobs 181-200 → `long-gpu` (70 GPU limit)
+`submit-expert` splits jobs across queues (long-gpu first for fewer interruptions):
+- Jobs 1-70 → `long-gpu` (70 GPU limit, 48h walltime)
+- Jobs 71-200 → `short-gpu` (130 jobs, 6h walltime with auto-resume)
 
 Jobs that get preempted are automatically requeued and resume from their last checkpoint.
 
