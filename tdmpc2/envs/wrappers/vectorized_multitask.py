@@ -151,11 +151,17 @@ class VectorizedMultitaskWrapper(gym.Wrapper):
 			   self._preprocess_info(info)
 	
 	def render(self, *args, **kwargs):
-		frames = []
-		for env in self.env.envs:
-			frame = env.render(*args, **kwargs)
-			if frame is not None:
-				frames.append(torch.from_numpy(frame))
+		if isinstance(self.env, AsyncVectorEnv):
+			# AsyncVectorEnv runs envs in subprocesses - use call() to invoke render
+			frames = self.env.call("render", *args, **kwargs)
+			frames = [torch.from_numpy(frame) for frame in frames if frame is not None]
+		else:
+			# SyncVectorEnv has direct access to .envs
+			frames = []
+			for env in self.env.envs:
+				frame = env.render(*args, **kwargs)
+				if frame is not None:
+					frames.append(torch.from_numpy(frame))
 		return torch.cat(frames, dim=1) if len(frames) > 0 else None
 
 
