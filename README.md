@@ -126,19 +126,32 @@ Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 **CLI tools:**
 
 ```bash
-# Discover runs from local logs
-make discover-logs
+# Discover runs (local logs only by default)
+make discover
 
-# Filter by status (completed, crashed, running, preempted, interrupted)
-make discover-logs opts="--status completed"
-make list-crashed   # Shortcut for crashed runs
-make list-completed # Shortcut for completed runs
+# Discover from both local and wandb (joined)
+make discover wandb=wm-planning/mmbench
 
-# Discover runs from Weights & Biases
-make discover-wandb wandb=wm-planning/mmbench opts="--limit 100"
+# Filter by status (unified: completed, running, crashed)
+make list-completed
+make list-running
+make list-crashed
+
+# Find sync issues (requires wandb)
+make list-local-only wandb=wm-planning/mmbench  # Not uploaded to wandb
+make list-wandb-only wandb=wm-planning/mmbench  # No local logs
 
 # Collect videos from trained tasks (run from tdmpc2/)
 cd tdmpc2 && python discover/collect_videos.py --min-progress 0.5
+```
+
+You can also set environment variables for defaults:
+
+```bash
+export LOGS_DIR=./logs
+export WANDB_PROJECT=wm-planning/mmbench
+make discover        # Uses both sources
+make list-completed  # Filter across both
 ```
 
 ----
@@ -153,19 +166,28 @@ Run `make help` to see all available targets:
 | `make interactive` | Launch interactive GPU session (Docker container) |
 | `make submit-expert` | Submit all 200 expert training jobs (LSF) |
 | `make test-sanity` | Run import sanity checks (inside Docker container) |
-| `make discover-logs` | Discover runs from local logs directory |
-| `make discover-wandb` | Discover runs from Weights & Biases |
-| `make list-crashed` | List all crashed runs (with error messages) |
-| `make list-completed` | List all completed runs |
-| `make list-running` | List all currently running runs |
+| `make discover` | Discover all runs from configured sources |
+| `make list-completed` | Filter by status=completed |
+| `make list-running` | Filter by status=running |
+| `make list-crashed` | Filter by status=crashed |
+| `make list-local-only` | Runs only in local logs (not synced to wandb) |
+| `make list-wandb-only` | Runs only on wandb (no local logs) |
+
+**Configuration:**
+
+| Variable | Description |
+|----------|-------------|
+| `logs=<path>` | Local logs directory (default: `tdmpc2/logs`) |
+| `wandb=<entity/project>` | Wandb project (optional) |
+| `opts="..."` | Additional options for `runs.py` |
 
 **Examples:**
 
 ```bash
-make discover-logs                                    # Scan default logs directory
-make discover-logs logs=./my_logs                     # Custom logs path
-make discover-wandb wandb=wm-planning/mmbench         # Scan W&B project
-make discover-logs opts="--save runs.parquet"         # Save results to file
+make discover                                  # Local logs only
+make discover wandb=wm-planning/mmbench        # Both sources (joined)
+make list-completed wandb=wm-planning/mmbench  # Completed from both
+make discover opts="--save runs.parquet"       # Save to file
 ```
 
 ----

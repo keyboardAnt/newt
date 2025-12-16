@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """
-Lightweight CLI to discover TD-MPC2 runs from local logs or Weights & Biases.
+Unified CLI to discover TD-MPC2 runs from local logs and/or Weights & Biases.
 
 Usage:
-  python discover/runs.py logs tdmpc2/logs --print
-  python discover/runs.py wandb <entity/project> --print
+  python runs.py --print                              # Auto-detect sources from env vars
+  python runs.py --logs ./logs --print                # Local logs only
+  python runs.py --wandb entity/project --print       # Wandb only
+  python runs.py --logs ./logs --wandb entity/project --print  # Both (joined)
+
+Environment variables:
+  LOGS_DIR       Default path to local logs directory
+  WANDB_PROJECT  Default wandb project (entity/project)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import warnings
 from datetime import datetime
@@ -20,6 +27,16 @@ import yaml
 
 if TYPE_CHECKING:
     import pandas as pd  # type: ignore
+
+
+# Status normalization: map wandb state to unified status
+WANDB_STATE_TO_STATUS = {
+    "finished": "completed",
+    "running": "running",
+    "crashed": "crashed",
+    "failed": "crashed",
+    "killed": "crashed",
+}
 
 
 def require_pandas():
@@ -54,29 +71,26 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
     pd = require_pandas()
     logs_dir = logs_dir.expanduser().resolve()
     if not logs_dir.is_dir():
-        raise SystemExit(f"Logs directory not found: {logs_dir}")
+        sys.stderr.write(f"Warning: Logs directory not found: {logs_dir}\n")
+        return pd.DataFrame()
 
     rows: List[dict] = []
-    # Scan for run_info.yaml to find all runs (including those without checkpoints yet)
     for idx, run_info_path in enumerate(sorted(logs_dir.glob("*/run_info.yaml"))):
         if limit is not None and idx >= limit:
             break
 
         run_dir = run_info_path.parent
 
-        # Load metadata from run_info.yaml
         run_info = {}
         try:
             run_info = yaml.safe_load(run_info_path.read_text()) or {}
         except Exception:
             pass
 
-        # Find best checkpoint (if any)
         ckpts = [p for p in (run_dir / "checkpoints").glob("*.pt") 
                  if not p.stem.endswith('_trainer')]
         best_ckpt = max(ckpts, key=parse_ckpt_step) if ckpts else None
 
-        # Look for videos in both standard location and wandb media directory
         videos = sorted(
             str(p.resolve()) for p in run_dir.glob("videos/*.mp4")
         )
@@ -89,11 +103,10 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
 
         rows.append(
             {
-                "source": "local",
                 "task": run_info.get("task"),
                 "tasks": run_info.get("tasks", []),
                 "num_tasks": run_info.get("num_tasks", 1),
-                "run_id": run_dir.name,
+                "local_run_id": run_dir.name,
                 "seed": run_info.get("seed"),
                 "exp_name": run_info.get("exp_name"),
                 "status": run_info.get("status", "unknown"),
@@ -114,7 +127,10 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
             }
         )
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["found_in"] = "local"
+    return df
 
 
 def discover_wandb_runs(
@@ -159,14 +175,17 @@ def discover_wandb_runs(
             except Exception as exc:
                 warnings.warn(f"Could not list artifacts for run {run.id}: {exc}")
 
+        # Normalize wandb state to unified status
+        wandb_state = run.state
+        status = WANDB_STATE_TO_STATUS.get(wandb_state, wandb_state)
+
         rows.append(
             {
-                "source": "wandb",
                 "task": run.config.get("task"),
                 "seed": run.config.get("seed"),
                 "exp_name": run.config.get("exp_name") or run.name,
-                "run_id": run.id,
-                "state": run.state,
+                "wandb_run_id": run.id,
+                "status": status,
                 "tags": list(run.tags) if run.tags else [],
                 "user": getattr(run.user, "username", None),
                 "url": run.url,
@@ -178,7 +197,63 @@ def discover_wandb_runs(
             }
         )
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["found_in"] = "wandb"
+    return df
+
+
+def discover(
+    logs_dir: Optional[Path],
+    wandb_project: Optional[str],
+    limit: Optional[int],
+    include_artifacts: bool,
+) -> "pd.DataFrame":
+    """Discover runs from available sources, joining if both are provided."""
+    pd = require_pandas()
+    
+    local_df = pd.DataFrame()
+    wandb_df = pd.DataFrame()
+    
+    if logs_dir:
+        local_df = discover_local_logs(logs_dir, limit)
+    
+    if wandb_project:
+        wandb_df = discover_wandb_runs(wandb_project, limit, include_artifacts)
+    
+    # Single source - return as-is
+    if local_df.empty:
+        return wandb_df
+    if wandb_df.empty:
+        return local_df
+    
+    # Both sources - outer join on wandb_run_id
+    merged = pd.merge(
+        local_df,
+        wandb_df,
+        on="wandb_run_id",
+        how="outer",
+        suffixes=("_local", "_wandb"),
+        indicator=True,
+    )
+    
+    # Create found_in column from merge indicator
+    merged["found_in"] = merged["_merge"].map({
+        "both": "both",
+        "left_only": "local",
+        "right_only": "wandb",
+    })
+    merged = merged.drop(columns=["_merge"])
+    
+    # Consolidate common columns (prefer local value, fall back to wandb)
+    for col in ["task", "seed", "exp_name", "status", "updated_at"]:
+        local_col = f"{col}_local"
+        wandb_col = f"{col}_wandb"
+        if local_col in merged.columns and wandb_col in merged.columns:
+            merged[col] = merged[local_col].combine_first(merged[wandb_col])
+            merged = merged.drop(columns=[local_col, wandb_col])
+    
+    return merged
 
 
 def print_summary(df, max_rows: int = 20) -> None:
@@ -191,9 +266,10 @@ def print_summary(df, max_rows: int = 20) -> None:
     preview_cols = [
         col
         for col in (
-            "source",
+            "found_in",
             "task",
-            "run_id",
+            "local_run_id",
+            "wandb_run_id",
             "exp_name",
             "status",
             "ckpt_step",
@@ -216,65 +292,70 @@ def save_df(df, path: Path) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Discover TD-MPC2 runs from local logs or Weights & Biases."
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+        description="Discover TD-MPC2 runs from local logs and/or Weights & Biases.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Environment variables:
+  LOGS_DIR       Default path to local logs directory
+  WANDB_PROJECT  Default wandb project (entity/project)
 
-    logs_parser = subparsers.add_parser(
-        "logs", help="Scan local logs directory (logs/<task>/<run_id>/...)."
+Examples:
+  %(prog)s --print                                    # Use env var defaults
+  %(prog)s --logs ./logs --print                      # Local only
+  %(prog)s --wandb wm-planning/mmbench --print        # Wandb only
+  %(prog)s --logs ./logs --wandb wm-planning/mmbench  # Both (joined)
+  %(prog)s --status completed --print                 # Filter by status
+  %(prog)s --found-in local --print                   # Only local-only runs
+""",
     )
-    logs_parser.add_argument("logs_dir", type=Path, help="Path to logs directory.")
-    logs_parser.add_argument(
+    
+    parser.add_argument(
+        "--logs",
+        type=Path,
+        default=None,
+        help="Path to local logs directory. Default: $LOGS_DIR env var.",
+    )
+    parser.add_argument(
+        "--wandb",
+        type=str,
+        default=None,
+        help="W&B project path (entity/project). Default: $WANDB_PROJECT env var.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Limit number of checkpoints scanned (for speed).",
+        help="Limit number of runs fetched from each source.",
     )
-    logs_parser.add_argument(
+    parser.add_argument(
+        "--artifacts",
+        action="store_true",
+        help="Include logged artifacts from wandb.",
+    )
+    parser.add_argument(
         "--save",
         type=Path,
         default=None,
-        help="Optional path to save dataframe (csv or parquet).",
+        help="Save dataframe to file (csv or parquet).",
     )
-    logs_parser.add_argument(
+    parser.add_argument(
         "--print",
         dest="do_print",
         action="store_true",
         help="Print a compact summary to stdout.",
     )
-    logs_parser.add_argument(
+    parser.add_argument(
         "--status",
         type=str,
         default=None,
-        help="Filter by status (e.g., completed, crashed, running, preempted).",
+        help="Filter by status (completed, running, crashed, preempted, unknown).",
     )
-
-    wandb_parser = subparsers.add_parser(
-        "wandb", help="List runs from a W&B project (entity/project)."
-    )
-    wandb_parser.add_argument("project_path", help="W&B path like entity/project.")
-    wandb_parser.add_argument(
-        "--limit",
-        type=int,
+    parser.add_argument(
+        "--found-in",
+        type=str,
         default=None,
-        help="Limit number of runs fetched.",
-    )
-    wandb_parser.add_argument(
-        "--artifacts",
-        action="store_true",
-        help="Also list logged artifacts (names only).",
-    )
-    wandb_parser.add_argument(
-        "--save",
-        type=Path,
-        default=None,
-        help="Optional path to save dataframe (csv or parquet).",
-    )
-    wandb_parser.add_argument(
-        "--print",
-        dest="do_print",
-        action="store_true",
-        help="Print a compact summary to stdout.",
+        choices=["both", "local", "wandb"],
+        help="Filter by where run was found.",
     )
 
     return parser
@@ -284,20 +365,29 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    if args.command == "logs":
-        df = discover_local_logs(args.logs_dir, args.limit)
-        if args.status:
-            df = df[df["status"] == args.status]
-    elif args.command == "wandb":
-        df = discover_wandb_runs(args.project_path, args.limit, args.artifacts)
-    else:
-        parser.error("Unknown command")
-        return 2
+    # Get sources from args or environment
+    logs_dir = args.logs or (Path(os.environ["LOGS_DIR"]) if "LOGS_DIR" in os.environ else None)
+    wandb_project = args.wandb or os.environ.get("WANDB_PROJECT")
+    
+    if not logs_dir and not wandb_project:
+        parser.error("No sources specified. Use --logs, --wandb, or set LOGS_DIR/WANDB_PROJECT env vars.")
+        return 1
+    
+    # Discover runs
+    df = discover(logs_dir, wandb_project, args.limit, args.artifacts)
+    
+    # Apply filters
+    if args.status and not df.empty:
+        df = df[df["status"] == args.status]
+    if args.found_in and not df.empty:
+        df = df[df["found_in"] == args.found_in]
 
+    # Output
     if args.save:
         save_df(df, args.save)
-    if getattr(args, "do_print", False):
+    if args.do_print:
         print_summary(df)
+    
     return 0
 
 

@@ -73,16 +73,46 @@ discover/
 
 ### Discover Runs
 
+The unified CLI discovers runs from local logs and/or wandb, with automatic joining when both sources are provided.
+
 ```bash
-# Scan local logs and print summary
-python discover/runs.py logs tdmpc2/logs --print
+# Local logs only
+python runs.py --logs ./logs --print
 
-# Fetch runs from Weights & Biases
-python discover/runs.py wandb wm-planning/mmbench --print --limit 100
+# Wandb only
+python runs.py --wandb wm-planning/mmbench --print
 
-# Save to parquet file
-python discover/runs.py logs tdmpc2/logs --save runs.parquet
+# Both sources (automatically joined by wandb_run_id)
+python runs.py --logs ./logs --wandb wm-planning/mmbench --print
+
+# Filter by unified status (completed, running, crashed)
+python runs.py --logs ./logs --status completed --print
+
+# Filter by where runs were found
+python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in both --print   # synced
+python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in local --print  # local only
+python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in wandb --print  # wandb only
+
+# Save to file
+python runs.py --logs ./logs --save runs.parquet
 ```
+
+**Environment variables:** Set `LOGS_DIR` and `WANDB_PROJECT` to skip specifying sources:
+
+```bash
+export LOGS_DIR=./logs
+export WANDB_PROJECT=wm-planning/mmbench
+python runs.py --print                    # Uses both sources
+python runs.py --status completed --print # Filter across both
+```
+
+**Status normalization:** Wandb's `state` field is automatically mapped to a unified `status`:
+
+| wandb state | unified status |
+|-------------|----------------|
+| `finished` | `completed` |
+| `running` | `running` |
+| `crashed`, `failed`, `killed` | `crashed` |
 
 ### Collect Videos
 
