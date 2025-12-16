@@ -57,27 +57,30 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         raise SystemExit(f"Logs directory not found: {logs_dir}")
 
     rows: List[dict] = []
-    for idx, ckpt in enumerate(logs_dir.glob("*/checkpoints/*.pt")):
+    # Scan for run_info.yaml to find all runs (including those without checkpoints yet)
+    for idx, run_info_path in enumerate(sorted(logs_dir.glob("*/run_info.yaml"))):
         if limit is not None and idx >= limit:
             break
 
-        run_dir = ckpt.parent.parent
+        run_dir = run_info_path.parent
 
-        # Load metadata from run_info.yaml if available
-        run_info_path = run_dir / "run_info.yaml"
+        # Load metadata from run_info.yaml
         run_info = {}
-        if run_info_path.is_file():
-            try:
-                run_info = yaml.safe_load(run_info_path.read_text()) or {}
-            except Exception:
-                pass
+        try:
+            run_info = yaml.safe_load(run_info_path.read_text()) or {}
+        except Exception:
+            pass
+
+        # Find best checkpoint (if any)
+        ckpts = [p for p in (run_dir / "checkpoints").glob("*.pt") 
+                 if not p.stem.endswith('_trainer')]
+        best_ckpt = max(ckpts, key=parse_ckpt_step) if ckpts else None
 
         # Look for videos in both standard location and wandb media directory
         videos = sorted(
             str(p.resolve()) for p in run_dir.glob("videos/*.mp4")
         )
         if not videos:
-            # Also check wandb media directory
             videos = sorted(
                 str(p.resolve()) for p in run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4")
             )
@@ -94,10 +97,10 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
                 "seed": run_info.get("seed"),
                 "exp_name": run_info.get("exp_name"),
                 "run_dir": str(run_dir.resolve()),
-                "ckpt_path": str(ckpt.resolve()),
-                "ckpt_step": parse_ckpt_step(ckpt),
+                "ckpt_path": str(best_ckpt.resolve()) if best_ckpt else None,
+                "ckpt_step": parse_ckpt_step(best_ckpt) if best_ckpt else 0,
                 "updated_at": datetime.fromtimestamp(
-                    ckpt.stat().st_mtime
+                    best_ckpt.stat().st_mtime if best_ckpt else run_info_path.stat().st_mtime
                 ).isoformat(),
                 "videos": videos,
                 "config_path": str(config_path.resolve())
