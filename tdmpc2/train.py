@@ -53,8 +53,13 @@ def setup(rank, world_size, port):
 
 def write_run_info(cfg, work_dir: Path):
 	"""Write run metadata to run_info.yaml for easier debugging and log discovery."""
+	# Get unique tasks (handles both single-task and multi-task/soup runs)
+	unique_tasks = list(dict.fromkeys(cfg.global_tasks)) if cfg.global_tasks else [cfg.task]
+	
 	info = {
-		'task': cfg.task,
+		'task': cfg.task,  # Primary task identifier (e.g., 'soup' or 'walker-walk')
+		'tasks': unique_tasks,  # Full list of unique tasks being trained
+		'num_tasks': len(unique_tasks),
 		'run_id': cfg.run_id,
 		'exp_name': cfg.exp_name,
 		'seed': cfg.seed,

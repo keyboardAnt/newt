@@ -28,13 +28,24 @@ echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 # Pass task via environment variable since heredoc is single-quoted
 export TASK
 eval $(python - <<'PY'
-import os
+import os, yaml
 from pathlib import Path
 from discover import parse_step
 
 task = os.environ.get("TASK", "")
-logs_dir = Path("logs") / task
-candidates = [p for p in logs_dir.glob("*/checkpoints/*.pt") if not p.stem.endswith('_trainer')]
+logs_dir = Path("logs")
+candidates = []
+for run_dir in logs_dir.iterdir():
+    if not run_dir.is_dir():
+        continue
+    run_info_path = run_dir / "run_info.yaml"
+    if run_info_path.exists():
+        info = yaml.safe_load(run_info_path.read_text()) or {}
+        tasks = info.get("tasks", [info.get("task")])
+        if task in tasks:
+            for ckpt in (run_dir / "checkpoints").glob("*.pt"):
+                if not ckpt.stem.endswith('_trainer'):
+                    candidates.append(ckpt)
 if not candidates:
     print('CKPT=')
     print('RUN_ID=')

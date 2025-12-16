@@ -22,13 +22,29 @@ def require_pandas():
 
 
 def find_task_videos(task: str, logs_dir: Path) -> List[str]:
-    """Find all videos for a task by scanning the logs directory."""
-    task_dir = logs_dir / task
-    if not task_dir.is_dir():
+    """Find all videos for a task by scanning run directories.
+    
+    With run-first structure (logs/<run_id>/), we scan all runs and look for
+    videos that match the task name in their filename or subdirectory.
+    """
+    if not logs_dir.is_dir():
         return []
-    videos = list(task_dir.glob("*/wandb/run-*/files/media/videos/**/*.mp4"))
-    videos += list(task_dir.glob("*/videos/*.mp4"))
-    return sorted(str(v) for v in videos)
+    videos = []
+    # Scan all run directories for videos
+    for run_dir in logs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+        # Check videos/<task>/*.mp4 or videos/*<task>*.mp4
+        task_video_dir = run_dir / "videos" / task
+        if task_video_dir.is_dir():
+            videos.extend(task_video_dir.glob("*.mp4"))
+        # Also check for task name in video filename
+        video_dir = run_dir / "videos"
+        if video_dir.is_dir():
+            videos.extend(p for p in video_dir.glob(f"*{task}*.mp4"))
+        # Check wandb media directory
+        videos.extend(run_dir.glob(f"wandb/run-*/files/media/videos/**/*{task}*.mp4"))
+    return sorted(set(str(v) for v in videos))
 
 
 def tasks_ready_for_eval(
@@ -133,13 +149,24 @@ echo "LSF job index: ${{LSB_JOBINDEX}}, task: ${{TASK}}"
 
 export TASK
 eval $(python - <<'PY'
-import os
+import os, yaml
 from pathlib import Path
 from discover import parse_step
 
 task = os.environ.get("TASK", "")
-logs_dir = Path("logs") / task
-candidates = [p for p in logs_dir.glob("*/checkpoints/*.pt") if not p.stem.endswith('_trainer')]
+logs_dir = Path("logs")
+candidates = []
+for run_dir in logs_dir.iterdir():
+    if not run_dir.is_dir():
+        continue
+    run_info_path = run_dir / "run_info.yaml"
+    if run_info_path.exists():
+        info = yaml.safe_load(run_info_path.read_text()) or {{}}
+        tasks = info.get("tasks", [info.get("task")])
+        if task in tasks:
+            for ckpt in (run_dir / "checkpoints").glob("*.pt"):
+                if not ckpt.stem.endswith('_trainer'):
+                    candidates.append(ckpt)
 if not candidates:
     print('CKPT=')
     print('RUN_ID=')

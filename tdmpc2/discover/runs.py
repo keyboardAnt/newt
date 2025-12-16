@@ -57,12 +57,11 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         raise SystemExit(f"Logs directory not found: {logs_dir}")
 
     rows: List[dict] = []
-    for idx, ckpt in enumerate(logs_dir.glob("*/*/checkpoints/*.pt")):
+    for idx, ckpt in enumerate(logs_dir.glob("*/checkpoints/*.pt")):
         if limit is not None and idx >= limit:
             break
 
         run_dir = ckpt.parent.parent
-        task_dir = run_dir.parent
 
         # Load metadata from run_info.yaml if available
         run_info_path = run_dir / "run_info.yaml"
@@ -88,8 +87,10 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         rows.append(
             {
                 "source": "local",
-                "task": task_dir.name,
-                "run_id": run_dir.name,  # Timestamp-based run identifier
+                "task": run_info.get("task"),
+                "tasks": run_info.get("tasks", []),
+                "num_tasks": run_info.get("num_tasks", 1),
+                "run_id": run_dir.name,
                 "seed": run_info.get("seed"),
                 "exp_name": run_info.get("exp_name"),
                 "run_dir": str(run_dir.resolve()),

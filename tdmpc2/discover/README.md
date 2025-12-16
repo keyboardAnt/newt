@@ -4,29 +4,32 @@ Tools for discovering, analyzing, and visualizing TD-MPC2 training runs from loc
 
 ## Log Directory Structure
 
-All logs are consolidated in a single timestamp-based directory structure (Hydra's default `outputs/` directory is disabled):
+All logs use a **run-first** structure where each run gets a unique timestamp-based directory. This design supports both single-task and multi-task training (e.g., "soup" with 200 tasks).
 
 ```
-logs/<task>/<YYYYMMDD_HHMMSS>[_exp_name]/
-├── run_info.yaml      # Metadata: task, seed, exp_name, LSF job ID, git commit, etc.
-├── checkpoints/       # Model checkpoints
-├── videos/            # Evaluation videos
+logs/<YYYYMMDD_HHMMSS>[_exp_name]/
+├── run_info.yaml      # Metadata: task(s), seed, exp_name, LSF job ID, git commit, etc.
+├── checkpoints/       # Model checkpoints (shared across all tasks in multi-task runs)
+├── videos/            # Evaluation videos (organized by task for multi-task runs)
+│   ├── walker-walk/
+│   └── cup-catch/
 └── wandb/             # Wandb sync data
 ```
 
 **Example:**
 ```
-logs/walker-walk/
-├── 20251215_234251/                   # Run with default exp_name
-├── 20251216_091500_ablation_lr/       # Run with custom exp_name suffix
-└── 20251216_143000_fix_async/         # Another run with exp_name suffix
+logs/
+├── 20251215_234251/                   # Single-task run (walker-walk)
+├── 20251216_091500_ablation_lr/       # Single-task run with custom exp_name
+└── 20251216_143000_soup_full/         # Multi-task run (200 tasks, one checkpoint)
 ```
 
 Common operations:
-- List all runs for a task: `ls logs/walker-walk/`
-- Find latest run: `ls logs/walker-walk/ | tail -1`
-- Find today's runs: `ls logs/walker-walk/ | grep ^$(date +%Y%m%d)`
-- Find failed runs: `grep -l "status: failed" logs/*/*/run_info.yaml`
+- List all runs: `ls logs/`
+- Find latest run: `ls logs/ | tail -1`
+- Find today's runs: `ls logs/ | grep ^$(date +%Y%m%d)`
+- Find runs for a task: `grep -l '"walker-walk"' logs/*/run_info.yaml`
+- Find failed runs: `grep -l "status: failed" logs/*/run_info.yaml`
 
 ## Installation
 

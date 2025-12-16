@@ -36,24 +36,33 @@ def find_best_runs(logs_dir: Path, min_step: int) -> List[Dict]:
     """Find the best (highest step) run for each task that meets the threshold."""
     task_best: Dict[str, Dict] = {}
     
-    for ckpt in logs_dir.glob("*/*/checkpoints/*.pt"):
+    for ckpt in logs_dir.glob("*/checkpoints/*.pt"):
         if ckpt.stem.endswith('_trainer'):
             continue  # Skip trainer state files
         run_dir = ckpt.parent.parent
-        task_dir = run_dir.parent
-        task = task_dir.name
         step = parse_step(ckpt)
         
         if step < min_step:
             continue
         
-        if task not in task_best or step > task_best[task]['step']:
-            task_best[task] = {
-                'task': task,
-                'step': step,
-                'ckpt_path': str(ckpt),
-                'run_dir': str(run_dir),
-            }
+        # Read task(s) from run_info.yaml
+        run_info_path = run_dir / "run_info.yaml"
+        if run_info_path.exists():
+            import yaml
+            info = yaml.safe_load(run_info_path.read_text()) or {}
+            tasks = info.get("tasks", [info.get("task")])
+        else:
+            continue  # Skip runs without metadata
+        
+        # Update best for each task in this run
+        for task in tasks:
+            if task and (task not in task_best or step > task_best[task]['step']):
+                task_best[task] = {
+                    'task': task,
+                    'step': step,
+                    'ckpt_path': str(ckpt),
+                    'run_dir': str(run_dir),
+                }
     
     # Add videos for each task
     for task, info in task_best.items():

@@ -3,17 +3,36 @@
 Evaluate the latest checkpoint per task listed in jobs/tasks_soup.txt.
 
 For each task:
-- find all *.pt under logs/<task>/<run_id>/checkpoints/
-- pick the checkpoint with the largest step number from the filename
+- scan all run directories under logs/
+- find runs containing the task (via run_info.yaml)
+- pick the checkpoint with the largest step number
 - run a short eval (steps=1) via train.py
 
 Tasks without any checkpoints are skipped with a log message.
 """
 
 import subprocess
+import yaml
 from pathlib import Path
 
 from discover import parse_step
+
+
+def find_best_checkpoint_for_task(logs_dir: Path, task: str) -> Path | None:
+    """Find the best checkpoint for a given task across all runs."""
+    candidates = []
+    for run_dir in logs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+        run_info_path = run_dir / "run_info.yaml"
+        if run_info_path.exists():
+            info = yaml.safe_load(run_info_path.read_text()) or {}
+            tasks = info.get("tasks", [info.get("task")])
+            if task in tasks:
+                for ckpt in (run_dir / "checkpoints").glob("*.pt"):
+                    if not ckpt.stem.endswith('_trainer'):
+                        candidates.append(ckpt)
+    return max(candidates, key=parse_step) if candidates else None
 
 
 def main() -> None:
@@ -29,14 +48,11 @@ def main() -> None:
         tasks = [line.strip() for line in f if line.strip()]
 
     for task in tasks:
-        task_logs_dir = logs_dir / task
-        candidates = [p for p in task_logs_dir.glob("*/checkpoints/*.pt") if not p.stem.endswith('_trainer')]
-        if not candidates:
-            print(f"[SKIP] No checkpoints found for task '{task}' under {task_logs_dir}")
+        best_ckpt = find_best_checkpoint_for_task(logs_dir, task)
+        if not best_ckpt:
+            print(f"[SKIP] No checkpoints found for task '{task}'")
             continue
 
-        # Pick the checkpoint with the largest step number
-        best_ckpt = max(candidates, key=parse_step)
         run_id = best_ckpt.parent.parent.name
         step_stem = best_ckpt.stem
 

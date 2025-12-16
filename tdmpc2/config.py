@@ -143,11 +143,12 @@ def parse_cfg(cfg):
 	"""
 	Parses the experiment config dataclass. Mostly for convenience.
 	"""
-	# Generate timestamp-based run directory
+	# Generate timestamp-based run directory (run-first structure)
+	# All artifacts for a run live under logs/<run_id>/, regardless of task count
 	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 	run_name = f"{timestamp}_{cfg.exp_name}" if cfg.exp_name != "default" else timestamp
 	cfg.run_id = run_name
-	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / run_name
+	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / run_name
 	cfg.task_title = cfg.task.replace("-", " ").title()
 	cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins-1)  # Bin size for discrete regression
 
