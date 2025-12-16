@@ -148,8 +148,8 @@ cd tdmpc2 && python discover/collect_videos.py --min-progress 0.5
 You can also set environment variables for defaults:
 
 ```bash
-export LOGS_DIR=./logs
-export WANDB_PROJECT=wm-planning/mmbench
+export DISCOVER_LOGS=./logs
+export DISCOVER_WANDB=wm-planning/mmbench
 make discover        # Uses both sources
 make list-completed  # Filter across both
 ```

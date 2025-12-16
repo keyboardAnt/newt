@@ -97,11 +97,11 @@ python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in wandb --prin
 python runs.py --logs ./logs --save runs.parquet
 ```
 
-**Environment variables:** Set `LOGS_DIR` and `WANDB_PROJECT` to skip specifying sources:
+**Environment variables:** Set `DISCOVER_LOGS` and `DISCOVER_WANDB` to skip specifying sources:
 
 ```bash
-export LOGS_DIR=./logs
-export WANDB_PROJECT=wm-planning/mmbench
+export DISCOVER_LOGS=./logs
+export DISCOVER_WANDB=wm-planning/mmbench
 python runs.py --print                    # Uses both sources
 python runs.py --status completed --print # Filter across both
 ```
