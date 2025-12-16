@@ -5,11 +5,17 @@ os.environ["TORCH_DISTRIBUTED_TIMEOUT"] = "1800"
 os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = "1"
 os.environ['TORCH_LOGS'] = "+recompiles"
 import signal
+import socket
+import subprocess
 import sys
 import warnings
 warnings.filterwarnings('ignore')
 from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
 from typing import List
+
+import yaml
 
 import torch
 import torch.nn as nn
@@ -43,6 +49,28 @@ def setup(rank, world_size, port):
 		world_size=world_size
 	)
 	return port
+
+
+def write_run_info(cfg, work_dir: Path):
+	"""Write run metadata to run_info.yaml for easier debugging and log discovery."""
+	info = {
+		'task': cfg.task,
+		'run_id': cfg.run_id,
+		'exp_name': cfg.exp_name,
+		'seed': cfg.seed,
+		'started_at': datetime.now().isoformat(),
+		'lsf_job_id': os.environ.get('LSB_JOBID'),
+		'lsf_array_idx': os.environ.get('LSB_JOBINDEX'),
+		'hostname': socket.gethostname(),
+		'git_commit': subprocess.getoutput('git rev-parse --short HEAD 2>/dev/null') or None,
+		'status': 'running',
+		'steps': cfg.steps,
+		'model_size': cfg.model_size,
+		'checkpoint': cfg.checkpoint,
+	}
+	work_dir = Path(work_dir)
+	work_dir.mkdir(parents=True, exist_ok=True)
+	(work_dir / 'run_info.yaml').write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
 
 
 class DDPWrapper(nn.Module):
@@ -194,6 +222,9 @@ def launch(cfg: Config):
 	assert cfg.steps > 0, 'Must train for at least 1 step.'
 	cfg = parse_cfg(cfg)
 	print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
+	
+	# Write run metadata for easier debugging and log discovery
+	write_run_info(cfg, cfg.work_dir)
 
 	# Set batch size
 	cfg.world_size = torch.cuda.device_count() if cfg.multiproc else 1

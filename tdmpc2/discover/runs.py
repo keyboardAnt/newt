@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, TYPE_CHECKING
 
+import yaml
+
 if TYPE_CHECKING:
     import pandas as pd  # type: ignore
 
@@ -55,33 +57,42 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         raise SystemExit(f"Logs directory not found: {logs_dir}")
 
     rows: List[dict] = []
-    for idx, ckpt in enumerate(logs_dir.glob("*/*/*/models/*.pt")):
+    for idx, ckpt in enumerate(logs_dir.glob("*/*/checkpoints/*.pt")):
         if limit is not None and idx >= limit:
             break
 
-        exp_dir = ckpt.parent.parent  # .../<task>/<seed>/<exp>/models/<ckpt>.pt -> exp dir
-        seed_dir = exp_dir.parent
-        task_dir = seed_dir.parent
+        run_dir = ckpt.parent.parent
+        task_dir = run_dir.parent
+
+        # Load metadata from run_info.yaml if available
+        run_info_path = run_dir / "run_info.yaml"
+        run_info = {}
+        if run_info_path.is_file():
+            try:
+                run_info = yaml.safe_load(run_info_path.read_text()) or {}
+            except Exception:
+                pass
 
         # Look for videos in both standard location and wandb media directory
         videos = sorted(
-            str(p.resolve()) for p in exp_dir.glob("videos/*.mp4")
+            str(p.resolve()) for p in run_dir.glob("videos/*.mp4")
         )
         if not videos:
             # Also check wandb media directory
             videos = sorted(
-                str(p.resolve()) for p in exp_dir.glob("wandb/run-*/files/media/videos/**/*.mp4")
+                str(p.resolve()) for p in run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4")
             )
-        config_path = exp_dir / "config.yaml"
-        wandb_id_path = exp_dir / "wandb_run_id.txt"
+        config_path = run_dir / "config.yaml"
+        wandb_id_path = run_dir / "wandb_run_id.txt"
 
         rows.append(
             {
                 "source": "local",
                 "task": task_dir.name,
-                "seed": seed_dir.name,
-                "exp_name": exp_dir.name,
-                "run_dir": str(exp_dir.resolve()),
+                "run_id": run_dir.name,  # Timestamp-based run identifier
+                "seed": run_info.get("seed"),
+                "exp_name": run_info.get("exp_name"),
+                "run_dir": str(run_dir.resolve()),
                 "ckpt_path": str(ckpt.resolve()),
                 "ckpt_step": parse_ckpt_step(ckpt),
                 "updated_at": datetime.fromtimestamp(
@@ -174,6 +185,7 @@ def print_summary(df, max_rows: int = 20) -> None:
         for col in (
             "source",
             "task",
+            "run_id",
             "exp_name",
             "seed",
             "ckpt_step",
@@ -203,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     logs_parser = subparsers.add_parser(
-        "logs", help="Scan local logs directory (logs/<task>/<seed>/<exp>/...)."
+        "logs", help="Scan local logs directory (logs/<task>/<run_id>/...)."
     )
     logs_parser.add_argument("logs_dir", type=Path, help="Path to logs directory.")
     logs_parser.add_argument(

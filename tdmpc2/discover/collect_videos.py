@@ -36,10 +36,11 @@ def find_best_runs(logs_dir: Path, min_step: int) -> List[Dict]:
     """Find the best (highest step) run for each task that meets the threshold."""
     task_best: Dict[str, Dict] = {}
     
-    for ckpt in logs_dir.glob("*/*/*/models/*.pt"):
-        exp_dir = ckpt.parent.parent
-        seed_dir = exp_dir.parent
-        task_dir = seed_dir.parent
+    for ckpt in logs_dir.glob("*/*/checkpoints/*.pt"):
+        if ckpt.stem.endswith('_trainer'):
+            continue  # Skip trainer state files
+        run_dir = ckpt.parent.parent
+        task_dir = run_dir.parent
         task = task_dir.name
         step = parse_step(ckpt)
         
@@ -51,7 +52,7 @@ def find_best_runs(logs_dir: Path, min_step: int) -> List[Dict]:
                 'task': task,
                 'step': step,
                 'ckpt_path': str(ckpt),
-                'exp_dir': str(exp_dir),
+                'run_dir': str(run_dir),
             }
     
     # Add videos for each task

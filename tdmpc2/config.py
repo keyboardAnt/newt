@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
 
@@ -113,6 +114,7 @@ class Config:
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None
+	run_id: Optional[str] = None  # Timestamp-based run identifier
 	task_title: Optional[str] = None
 	tasks: Any = None
 	global_tasks: Any = None
@@ -141,8 +143,11 @@ def parse_cfg(cfg):
 	"""
 	Parses the experiment config dataclass. Mostly for convenience.
 	"""
-	# Convenience
-	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / str(cfg.seed) / cfg.exp_name
+	# Generate timestamp-based run directory
+	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+	run_name = f"{timestamp}_{cfg.exp_name}" if cfg.exp_name != "default" else timestamp
+	cfg.run_id = run_name
+	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / run_name
 	cfg.task_title = cfg.task.replace("-", " ").title()
 	cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins-1)  # Bin size for discrete regression
 

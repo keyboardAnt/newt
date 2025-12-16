@@ -64,7 +64,9 @@ We recommend using default hyperparameters, including the default model size of 
 Training automatically supports checkpoint-based resumption. If a job is interrupted (e.g., by cluster preemption), it will automatically resume from the latest checkpoint when restarted.
 
 **How it works:**
-- Checkpoints are saved periodically to `logs/<task>/<seed>/<exp_name>/models/`
+- Each run gets a unique timestamp-based directory: `logs/<task>/<YYYYMMDD_HHMMSS>[_exp_name]/`
+- Checkpoints are saved periodically to `logs/<task>/<run_id>/checkpoints/`
+- Each run directory contains a `run_info.yaml` with metadata (seed, exp_name, LSF job ID, git commit, etc.)
 - On startup, the trainer automatically finds and loads the latest checkpoint if one exists
 - Signal handlers (SIGTERM, SIGUSR2) save a checkpoint before the job exits
 - Optimizer states are preserved for seamless training continuation

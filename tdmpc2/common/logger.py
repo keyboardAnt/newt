@@ -84,7 +84,7 @@ class VideoRecorder:
 
 	def __init__(self, cfg, wandb, fps=15):
 		self.cfg = cfg
-		self._save_dir = make_dir(Path(cfg.work_dir) / 'eval_video')
+		self._save_dir = make_dir(Path(cfg.work_dir) / 'videos')
 		self._wandb = wandb
 		self.fps = fps
 		self.frames = []
@@ -126,7 +126,7 @@ class Logger:
 			self._video = None
 			return
 		self._log_dir = Path(make_dir(cfg.work_dir))
-		self._model_dir = make_dir(self._log_dir / "models")
+		self._model_dir = make_dir(self._log_dir / "checkpoints")
 		self._save_agent = cfg.save_agent
 		self._group = cfg_to_group(cfg)
 		self._seed = cfg.seed

@@ -2,6 +2,32 @@
 
 Tools for discovering, analyzing, and visualizing TD-MPC2 training runs from local logs and Weights & Biases.
 
+## Log Directory Structure
+
+Each training run creates a unique timestamp-based directory:
+
+```
+logs/<task>/<YYYYMMDD_HHMMSS>[_exp_name]/
+├── run_info.yaml      # Metadata: task, seed, exp_name, LSF job ID, git commit, etc.
+├── checkpoints/       # Model checkpoints
+├── videos/            # Evaluation videos
+└── wandb/             # Wandb sync data
+```
+
+**Example:**
+```
+logs/walker-walk/
+├── 20251215_234251/                   # Run with default exp_name
+├── 20251216_091500_ablation_lr/       # Run with custom exp_name suffix
+└── 20251216_143000_fix_async/         # Another run with exp_name suffix
+```
+
+Common operations:
+- List all runs for a task: `ls logs/walker-walk/`
+- Find latest run: `ls logs/walker-walk/ | tail -1`
+- Find today's runs: `ls logs/walker-walk/ | grep ^$(date +%Y%m%d)`
+- Find failed runs: `grep -l "status: failed" logs/*/*/run_info.yaml`
+
 ## Installation
 
 The module requires `pandas` and `matplotlib`. These are included in the main project's conda environment.

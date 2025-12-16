@@ -3,7 +3,7 @@
 Evaluate the latest checkpoint per task listed in jobs/tasks_soup.txt.
 
 For each task:
-- find all *.pt under logs/<task>/*/*/models/
+- find all *.pt under logs/<task>/<run_id>/checkpoints/
 - pick the checkpoint with the largest step number from the filename
 - run a short eval (steps=1) via train.py
 
@@ -29,20 +29,18 @@ def main() -> None:
         tasks = [line.strip() for line in f if line.strip()]
 
     for task in tasks:
-        # Find all checkpoints for this task: logs/<task>/*/*/models/*.pt
         task_logs_dir = logs_dir / task
-        candidates = sorted(task_logs_dir.glob("*/*/models/*.pt"))
+        candidates = [p for p in task_logs_dir.glob("*/checkpoints/*.pt") if not p.stem.endswith('_trainer')]
         if not candidates:
             print(f"[SKIP] No checkpoints found for task '{task}' under {task_logs_dir}")
             continue
 
         # Pick the checkpoint with the largest step number
         best_ckpt = max(candidates, key=parse_step)
-        # logs/<task>/<seed>/<exp_name>/models/<step>.pt
-        exp_name = best_ckpt.parent.parent.name
+        run_id = best_ckpt.parent.parent.name
         step_stem = best_ckpt.stem
 
-        eval_exp_name = f"eval_{exp_name}_{step_stem}"
+        eval_exp_name = f"eval_{run_id}_{step_stem}"
         print(f"[EVAL] task={task}, ckpt={best_ckpt}, exp_name={eval_exp_name}")
 
         cmd = [

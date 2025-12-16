@@ -26,8 +26,8 @@ def find_task_videos(task: str, logs_dir: Path) -> List[str]:
     task_dir = logs_dir / task
     if not task_dir.is_dir():
         return []
-    videos = list(task_dir.glob("**/wandb/run-*/files/media/videos/**/*.mp4"))
-    videos += list(task_dir.glob("**/videos/*.mp4"))
+    videos = list(task_dir.glob("*/wandb/run-*/files/media/videos/**/*.mp4"))
+    videos += list(task_dir.glob("*/videos/*.mp4"))
     return sorted(str(v) for v in videos)
 
 
@@ -135,19 +135,19 @@ export TASK
 eval $(python - <<'PY'
 import os
 from pathlib import Path
-from jobs.eval_latest_checkpoints import parse_step
+from discover import parse_step
 
 task = os.environ.get("TASK", "")
 logs_dir = Path("logs") / task
-candidates = sorted(logs_dir.glob("*/*/models/*.pt"))
+candidates = [p for p in logs_dir.glob("*/checkpoints/*.pt") if not p.stem.endswith('_trainer')]
 if not candidates:
     print('CKPT=')
-    print('EXP=')
+    print('RUN_ID=')
 else:
     best = max(candidates, key=parse_step)
-    exp = best.parent.parent.name
+    run_id = best.parent.parent.name
     print(f'CKPT="{{best}}"')
-    print(f'EXP="eval_{{exp}}_{{best.stem}}"')
+    print(f'RUN_ID="{{run_id}}"')
 PY
 )
 
@@ -166,7 +166,7 @@ python train.py \\
   num_envs=2 \\
   use_demos=False \\
   tasks_fp={project_root}/tasks.json \\
-  exp_name="${{EXP}}" \\
+  exp_name="eval_${{RUN_ID}}" \\
   save_video=True \\
   env_mode=sync \\
   compile=False

@@ -230,8 +230,8 @@ class Trainer():
 			if self.cfg.rank == 0:
 				print(colored(f'Loaded checkpoint from {self.cfg.checkpoint}.', 'blue', attrs=['bold']))
 		else:
-			# Auto-resume: find latest checkpoint in work_dir/models
-			ckpt_dir = Path(self.cfg.work_dir) / 'models'
+			# Auto-resume: find latest checkpoint in work_dir/checkpoints
+			ckpt_dir = Path(self.cfg.work_dir) / 'checkpoints'
 			if ckpt_dir.exists():
 				# Find checkpoint files (exclude trainer state files)
 				checkpoints = [p for p in ckpt_dir.glob('*.pt') if not p.stem.endswith('_trainer')]
