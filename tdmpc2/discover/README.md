@@ -73,46 +73,21 @@ discover/
 
 ### Discover Runs
 
-The unified CLI discovers runs from local logs and/or wandb, with automatic joining when both sources are provided.
+Defaults are hardcoded: local logs from `tdmpc2/logs`, wandb from `wm-planning/mmbench`.
 
 ```bash
-# Local logs only
-python runs.py --logs ./logs --print
-
-# Wandb only
-python runs.py --wandb wm-planning/mmbench --print
-
-# Both sources (automatically joined by wandb_run_id)
-python runs.py --logs ./logs --wandb wm-planning/mmbench --print
-
-# Filter by unified status (completed, running, crashed)
-python runs.py --logs ./logs --status completed --print
-
-# Filter by where runs were found
-python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in both --print   # synced
-python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in local --print  # local only
-python runs.py --logs ./logs --wandb wm-planning/mmbench --found-in wandb --print  # wandb only
-
-# Save to file
-python runs.py --logs ./logs --save runs.parquet
+python runs.py --print                  # All runs (local + wandb)
+python runs.py --status completed --print  # Filter by status
+python runs.py --local-only --print     # Skip wandb
+python runs.py --wandb-only --print     # Skip local
+python runs.py --found-in local --print # Runs not synced to wandb
+python runs.py --save runs.parquet      # Save to file
 ```
 
-**Environment variables:** Set `DISCOVER_LOGS` and `DISCOVER_WANDB` to skip specifying sources:
-
-```bash
-export DISCOVER_LOGS=./logs
-export DISCOVER_WANDB=wm-planning/mmbench
-python runs.py --print                    # Uses both sources
-python runs.py --status completed --print # Filter across both
-```
-
-**Status normalization:** Wandb's `state` field is automatically mapped to a unified `status`:
-
-| wandb state | unified status |
-|-------------|----------------|
-| `finished` | `completed` |
-| `running` | `running` |
-| `crashed`, `failed`, `killed` | `crashed` |
+**Status normalization:** Wandb's `state` is mapped to unified `status`:
+- `finished` → `completed`
+- `running` → `running`
+- `crashed`, `failed`, `killed` → `crashed`
 
 ### Collect Videos
 
