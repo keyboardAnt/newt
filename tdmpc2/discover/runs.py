@@ -70,10 +70,18 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         sys.stderr.write(f"Warning: Logs directory not found: {logs_dir}\n")
         return pd.DataFrame()
 
+    sys.stderr.write(f"Scanning local logs ({logs_dir})...\n")
     rows: List[dict] = []
-    for idx, run_info_path in enumerate(sorted(logs_dir.glob("*/run_info.yaml"))):
+    run_dirs = sorted(logs_dir.glob("*/run_info.yaml"))
+    total = len(run_dirs)
+    
+    for idx, run_info_path in enumerate(run_dirs):
         if limit is not None and idx >= limit:
             break
+        
+        if idx % 50 == 0:
+            sys.stderr.write(f"\r  {idx}/{total} runs scanned...")
+            sys.stderr.flush()
 
         run_dir = run_info_path.parent
         run_info = {}
@@ -108,6 +116,7 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
             "ckpt_path": str(best_ckpt.resolve()) if best_ckpt else None,
         })
 
+    sys.stderr.write(f"\r  {len(rows)} local runs found        \n")
     df = pd.DataFrame(rows)
     if not df.empty:
         df["found_in"] = "local"
@@ -117,9 +126,13 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
 def _extract_task_from_tags(tags: List[str]) -> Optional[str]:
     """Extract task name from wandb tags (e.g., ['expert-foo', 'foo', 'seed:1'] -> 'foo')."""
     for tag in tags:
-        if tag.startswith("seed:") or tag.startswith("expert-"):
+        if tag.startswith("seed:") or tag.startswith("expert-") or tag.startswith("eval-"):
             continue
         return tag
+    # Fallback: try to extract from expert- tag
+    for tag in tags:
+        if tag.startswith("expert-"):
+            return tag[7:]  # Remove "expert-" prefix
     return None
 
 
@@ -137,17 +150,28 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
     runs = api.runs(project_path, per_page=100)
     rows: List[dict] = []
     start_time = time.time()
+    last_update = start_time
 
     for run in runs:
         if limit is not None and len(rows) >= limit:
+            sys.stderr.write(f"\r  {len(rows)} runs (limit reached)             \n")
             break
-        if timeout and (time.time() - start_time) > timeout:
-            sys.stderr.write(f"  Timeout after {timeout}s, returning {len(rows)} runs\n")
+        
+        elapsed = time.time() - start_time
+        if timeout and elapsed > timeout:
+            sys.stderr.write(f"\r  {len(rows)} runs (timeout after {timeout}s)   \n")
             break
 
         tags = list(run.tags) if run.tags else []
         task = _extract_task_from_tags(tags)
         status = WANDB_STATE_TO_STATUS.get(run.state, run.state)
+        
+        # Fallback: get task from config if not in tags (slower but needed for older runs)
+        if task is None and hasattr(run, 'config'):
+            try:
+                task = run.config.get("task")
+            except Exception:
+                pass
 
         rows.append({
             "task": task,
@@ -158,11 +182,17 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
             "url": run.url,
         })
         
-        if len(rows) % 500 == 0:
-            sys.stderr.write(f"  ...{len(rows)} runs\n")
+        # Update progress every 0.5s
+        now = time.time()
+        if now - last_update > 0.5:
+            rate = len(rows) / (now - start_time) if now > start_time else 0
+            sys.stderr.write(f"\r  {len(rows)} runs fetched ({rate:.0f}/s, {now - start_time:.0f}s elapsed)...")
+            sys.stderr.flush()
+            last_update = now
 
     elapsed = time.time() - start_time
-    sys.stderr.write(f"  {len(rows)} runs fetched in {elapsed:.1f}s\n")
+    rate = len(rows) / elapsed if elapsed > 0 else 0
+    sys.stderr.write(f"\r  {len(rows)} runs fetched in {elapsed:.1f}s ({rate:.0f}/s)        \n")
     df = pd.DataFrame(rows)
     if not df.empty:
         df["found_in"] = "wandb"
@@ -215,7 +245,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser.add_argument("--local-only", action="store_true", help="Skip wandb")
     parser.add_argument("--wandb-only", action="store_true", help="Skip local logs")
     parser.add_argument("--limit", type=int, help="Limit runs per source")
-    parser.add_argument("--timeout", type=int, default=120, help="Timeout in seconds for wandb (default: 120)")
+    parser.add_argument("--timeout", type=int, default=300, help="Timeout in seconds for wandb (default: 300)")
     parser.add_argument("--status", type=str, help="Filter by status")
     parser.add_argument("--found-in", type=str, choices=["both", "local", "wandb"], help="Filter by source")
     parser.add_argument("--save", type=Path, help="Save to file (csv/parquet)")
