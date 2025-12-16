@@ -108,14 +108,40 @@ training_overview(df, target_step=5_000_000)
 
 Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 
-**CLI tools (run from `tdmpc2/`):**
+**CLI tools:**
 
 ```bash
-# Discover runs from local logs or W&B
-python discover/runs.py logs logs --print
+# Discover runs from local logs
+make discover-logs opts="--print"
 
-# Collect videos from trained tasks
-python discover/collect_videos.py --min-progress 0.5
+# Discover runs from Weights & Biases
+make discover-wandb wandb=wm-planning/mmbench opts="--print --limit 100"
+
+# Collect videos from trained tasks (run from tdmpc2/)
+cd tdmpc2 && python discover/collect_videos.py --min-progress 0.5
+```
+
+----
+
+## Make Targets
+
+Run `make help` to see all available targets:
+
+| Target | Description |
+|--------|-------------|
+| `make help` | Show all available targets |
+| `make interactive` | Launch interactive GPU session (Docker container) |
+| `make submit-expert` | Submit all 200 expert training jobs (LSF) |
+| `make test-sanity` | Run import sanity checks (inside Docker container) |
+| `make discover-logs` | Discover runs from local logs directory |
+| `make discover-wandb` | Discover runs from Weights & Biases |
+
+**Examples:**
+
+```bash
+make discover-logs                                    # Scan default logs directory
+make discover-logs logs=./my_logs opts="--print"     # Custom path with options
+make discover-wandb wandb=wm-planning/mmbench        # Scan W&B project
 ```
 
 ----
