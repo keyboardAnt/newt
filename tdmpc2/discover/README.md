@@ -4,7 +4,7 @@ Tools for discovering, analyzing, and visualizing TD-MPC2 training runs from loc
 
 ## Log Directory Structure
 
-Each training run creates a unique timestamp-based directory:
+All logs are consolidated in a single timestamp-based directory structure (Hydra's default `outputs/` directory is disabled):
 
 ```
 logs/<task>/<YYYYMMDD_HHMMSS>[_exp_name]/

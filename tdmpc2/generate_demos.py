@@ -17,7 +17,7 @@ torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
 
 cs = ConfigStore.instance()
-cs.store(name="config", node=Config)
+cs.store(name="base_config", node=Config)
 
 
 def to_td(cfg, env, obs, action=None, reward=None, value=None, terminated=None, frame=None):
@@ -60,7 +60,7 @@ def estimate_value(agent, obs, action, task):
 	return value.cpu().squeeze(-1)
 
 
-@hydra.main(version_base=None, config_name="config")
+@hydra.main(version_base=None, config_path="conf", config_name="config")
 def generate_demos(cfg):
 	"""Generates demonstrations."""
 	assert torch.cuda.is_available()

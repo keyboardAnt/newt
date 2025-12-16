@@ -1,0 +1,14 @@
+# Main configuration file
+# Uses the structured Config dataclass from ConfigStore as the base,
+# with Hydra output disabled to consolidate logs in logs/<task>/<run_id>/
+
+defaults:
+  - base_config  # References the ConfigStore entry
+
+hydra:
+  run:
+    dir: .  # Don't create output directories
+  output_subdir: null  # Don't create .hydra subdirectory
+  job:
+    chdir: false  # Don't change working directory
+

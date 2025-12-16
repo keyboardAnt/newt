@@ -37,7 +37,7 @@ torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
 
 cs = ConfigStore.instance()
-cs.store(name="config", node=Config)
+cs.store(name="base_config", node=Config)
 
 
 def setup(rank, world_size, port):
@@ -216,7 +216,7 @@ def load_demos(
 		buffer.load_demos(tds)
 
 
-@hydra.main(version_base=None, config_name="config")
+@hydra.main(version_base=None, config_path="conf", config_name="config")
 def launch(cfg: Config):
 	assert torch.cuda.is_available()
 	assert cfg.steps > 0, 'Must train for at least 1 step.'
