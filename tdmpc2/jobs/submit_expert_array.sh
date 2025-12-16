@@ -31,4 +31,4 @@ bsub -J "newt-expert[71-200]" \
   -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0" \
   jobs/run_expert_task.sh
 
-echo "Done. Monitor with: bjobs -u \$USER | grep newt-expert"
+echo "Done. Monitor with: bjobs -J 'newt-expert*'"
