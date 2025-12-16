@@ -114,46 +114,67 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
     return df
 
 
-def discover_wandb_runs(project_path: str, limit: Optional[int]) -> "pd.DataFrame":
+def _extract_task_from_tags(tags: List[str]) -> Optional[str]:
+    """Extract task name from wandb tags (e.g., ['expert-foo', 'foo', 'seed:1'] -> 'foo')."""
+    for tag in tags:
+        if tag.startswith("seed:") or tag.startswith("expert-"):
+            continue
+        return tag
+    return None
+
+
+def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Optional[int] = None) -> "pd.DataFrame":
     pd = require_pandas()
+    import time
     try:
         import wandb  # type: ignore
     except ImportError as exc:
         sys.stderr.write("wandb is required. Install with `pip install wandb`.\n")
         raise SystemExit(1) from exc
 
-    api = wandb.Api()
-    runs = api.runs(project_path)
+    sys.stderr.write(f"Fetching runs from wandb ({project_path})...\n")
+    api = wandb.Api(timeout=timeout or 60)
+    runs = api.runs(project_path, per_page=100)
     rows: List[dict] = []
+    start_time = time.time()
 
     for run in runs:
         if limit is not None and len(rows) >= limit:
             break
+        if timeout and (time.time() - start_time) > timeout:
+            sys.stderr.write(f"  Timeout after {timeout}s, returning {len(rows)} runs\n")
+            break
 
-        wandb_state = run.state
-        status = WANDB_STATE_TO_STATUS.get(wandb_state, wandb_state)
+        tags = list(run.tags) if run.tags else []
+        task = _extract_task_from_tags(tags)
+        status = WANDB_STATE_TO_STATUS.get(run.state, run.state)
 
         rows.append({
-            "task": run.config.get("task"),
+            "task": task,
             "wandb_run_id": run.id,
-            "exp_name": run.config.get("exp_name") or run.name,
+            "exp_name": run.name,
             "status": status,
             "updated_at": run.updated_at.isoformat() if getattr(run, "updated_at", None) else None,
             "url": run.url,
         })
+        
+        if len(rows) % 500 == 0:
+            sys.stderr.write(f"  ...{len(rows)} runs\n")
 
+    elapsed = time.time() - start_time
+    sys.stderr.write(f"  {len(rows)} runs fetched in {elapsed:.1f}s\n")
     df = pd.DataFrame(rows)
     if not df.empty:
         df["found_in"] = "wandb"
     return df
 
 
-def discover(logs_dir: Optional[Path], wandb_project: Optional[str], limit: Optional[int]) -> "pd.DataFrame":
+def discover(logs_dir: Optional[Path], wandb_project: Optional[str], limit: Optional[int], timeout: Optional[int] = None) -> "pd.DataFrame":
     """Discover runs, joining local and wandb if both provided."""
     pd = require_pandas()
     
     local_df = discover_local_logs(logs_dir, limit) if logs_dir else pd.DataFrame()
-    wandb_df = discover_wandb_runs(wandb_project, limit) if wandb_project else pd.DataFrame()
+    wandb_df = discover_wandb_runs(wandb_project, limit, timeout) if wandb_project else pd.DataFrame()
     
     if local_df.empty:
         return wandb_df
@@ -194,6 +215,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser.add_argument("--local-only", action="store_true", help="Skip wandb")
     parser.add_argument("--wandb-only", action="store_true", help="Skip local logs")
     parser.add_argument("--limit", type=int, help="Limit runs per source")
+    parser.add_argument("--timeout", type=int, default=120, help="Timeout in seconds for wandb (default: 120)")
     parser.add_argument("--status", type=str, help="Filter by status")
     parser.add_argument("--found-in", type=str, choices=["both", "local", "wandb"], help="Filter by source")
     parser.add_argument("--save", type=Path, help="Save to file (csv/parquet)")
@@ -204,7 +226,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     logs_dir = None if args.wandb_only else args.logs
     wandb_project = None if args.local_only else args.wandb
     
-    df = discover(logs_dir, wandb_project, args.limit)
+    df = discover(logs_dir, wandb_project, args.limit, args.timeout)
     
     if args.status and not df.empty:
         df = df[df["status"] == args.status]
