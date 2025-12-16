@@ -78,6 +78,22 @@ def write_run_info(cfg, work_dir: Path):
 	(work_dir / 'run_info.yaml').write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
 
 
+def update_run_info(work_dir: Path, status: str, final_step: int = None, error: str = None):
+	"""Update run_info.yaml with final status. Called on completion, crash, or interruption."""
+	run_info_path = Path(work_dir) / 'run_info.yaml'
+	if not run_info_path.exists():
+		return
+	
+	info = yaml.safe_load(run_info_path.read_text())
+	info['status'] = status
+	info['finished_at'] = datetime.now().isoformat()
+	if final_step is not None:
+		info['final_step'] = final_step
+	if error:
+		info['error'] = error[:500]  # Truncate long errors
+	run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
+
+
 class DDPWrapper(nn.Module):
 	def __init__(self, module: nn.Module):
 		super().__init__()
@@ -152,6 +168,8 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 		sig_name = signal.Signals(signum).name
 		print(colored(f'[Rank {cfg.rank}] Received {sig_name}, saving checkpoint...', 'yellow', attrs=['bold']))
 		trainer.save_checkpoint()
+		if cfg.rank == 0:
+			update_run_info(cfg.work_dir, 'preempted', final_step=trainer._step)
 		print(colored(f'[Rank {cfg.rank}] Checkpoint saved, exiting.', 'yellow', attrs=['bold']))
 		sys.exit(0)
 
@@ -162,16 +180,20 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 	try:
 		trainer.train()
 		if cfg.rank == 0:
+			update_run_info(cfg.work_dir, 'completed', final_step=trainer._step)
 			print('\nTraining completed successfully')
-	except Exception as e:
-		print(colored(f'[Rank {cfg.rank}] Training crashed with exception: {repr(e)}', 'red', attrs=['bold']))
-		raise  # Propagate the exception so it isn't swallowed
 	except KeyboardInterrupt:
 		print(colored(f'[Rank {cfg.rank}] Training interrupted by user (Ctrl+C)', 'red', attrs=['bold']))
 		trainer.save_checkpoint()
-		raise  # Optional: raise again if you want the shell to show KeyboardInterrupt
+		if cfg.rank == 0:
+			update_run_info(cfg.work_dir, 'interrupted', final_step=trainer._step)
+		raise
+	except Exception as e:
+		print(colored(f'[Rank {cfg.rank}] Training crashed with exception: {repr(e)}', 'red', attrs=['bold']))
+		if cfg.rank == 0:
+			update_run_info(cfg.work_dir, 'crashed', final_step=trainer._step, error=repr(e))
+		raise
 	finally:
-		print(colored('Training interrupted', 'red', attrs=['bold']))
 		if torch.distributed.is_initialized():
 			torch.distributed.destroy_process_group()
 

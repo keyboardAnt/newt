@@ -96,6 +96,10 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
                 "run_id": run_dir.name,
                 "seed": run_info.get("seed"),
                 "exp_name": run_info.get("exp_name"),
+                "status": run_info.get("status", "unknown"),
+                "steps": run_info.get("steps"),
+                "final_step": run_info.get("final_step"),
+                "error": run_info.get("error"),
                 "run_dir": str(run_dir.resolve()),
                 "ckpt_path": str(best_ckpt.resolve()) if best_ckpt else None,
                 "ckpt_step": parse_ckpt_step(best_ckpt) if best_ckpt else 0,
@@ -191,12 +195,10 @@ def print_summary(df, max_rows: int = 20) -> None:
             "task",
             "run_id",
             "exp_name",
-            "seed",
+            "status",
             "ckpt_step",
-            "state",
+            "steps",
             "updated_at",
-            "ckpt_path",
-            "url",
         )
         if col in df.columns
     ]
@@ -240,6 +242,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print a compact summary to stdout.",
     )
+    logs_parser.add_argument(
+        "--status",
+        type=str,
+        default=None,
+        help="Filter by status (e.g., completed, crashed, running, preempted).",
+    )
 
     wandb_parser = subparsers.add_parser(
         "wandb", help="List runs from a W&B project (entity/project)."
@@ -278,6 +286,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     if args.command == "logs":
         df = discover_local_logs(args.logs_dir, args.limit)
+        if args.status:
+            df = df[df["status"] == args.status]
     elif args.command == "wandb":
         df = discover_wandb_runs(args.project_path, args.limit, args.artifacts)
     else:

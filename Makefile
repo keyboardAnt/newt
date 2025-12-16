@@ -11,7 +11,8 @@ logs ?= $(ROOT)/tdmpc2/logs
 wandb ?=
 opts ?=
 
-.PHONY: help interactive submit-expert test-sanity discover-logs discover-wandb
+.PHONY: help interactive submit-expert test-sanity discover-logs discover-wandb \
+        list-crashed list-completed list-running list-preempted
 
 help:
 	@echo "Targets:"
@@ -20,6 +21,12 @@ help:
 	@echo "  test-sanity     Run import sanity checks (inside Docker container)"
 	@echo "  discover-logs   [logs=<path>] [opts=\"...\"]"
 	@echo "  discover-wandb  wandb=<entity/project> [opts=\"...\"]"
+	@echo ""
+	@echo "Status shortcuts:"
+	@echo "  list-crashed    List crashed runs (with errors)"
+	@echo "  list-completed  List successfully completed runs"
+	@echo "  list-running    List currently running runs"
+	@echo "  list-preempted  List preempted runs (can be resumed)"
 	@echo ""
 	@echo "Example: make interactive"
 
@@ -40,3 +47,16 @@ discover-wandb:
 test-sanity:
 	@echo "Running sanity checks (requires Docker container with torch)..."
 	@cd $(ROOT)/tdmpc2 && ./tests/test_imports.sh
+
+# Status shortcuts - quickly find runs by their state
+list-crashed:
+	@$(PYTHON) $(DISCOVER) logs $(logs) --status crashed --print $(opts)
+
+list-completed:
+	@$(PYTHON) $(DISCOVER) logs $(logs) --status completed --print $(opts)
+
+list-running:
+	@$(PYTHON) $(DISCOVER) logs $(logs) --status running --print $(opts)
+
+list-preempted:
+	@$(PYTHON) $(DISCOVER) logs $(logs) --status preempted --print $(opts)

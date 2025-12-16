@@ -66,11 +66,25 @@ Training automatically supports checkpoint-based resumption. If a job is interru
 **How it works:**
 - Each run gets a unique timestamp-based directory: `logs/<YYYYMMDD_HHMMSS>[_exp_name]/`
 - Checkpoints are saved periodically to `logs/<run_id>/checkpoints/`
-- Each run directory contains a `run_info.yaml` with metadata (tasks, seed, exp_name, LSF job ID, git commit, etc.)
+- Each run directory contains a `run_info.yaml` with metadata (tasks, seed, exp_name, LSF job ID, git commit, status, etc.)
 - The run-first structure supports multi-task training (e.g., "soup" with 200 tasks) with shared checkpoints
 - On startup, the trainer automatically finds and loads the latest checkpoint if one exists
 - Signal handlers (SIGTERM, SIGUSR2) save a checkpoint before the job exits
 - Optimizer states are preserved for seamless training continuation
+
+**Run status tracking:**
+
+Each run's `run_info.yaml` is automatically updated with its final status:
+
+| Status | Description |
+|--------|-------------|
+| `running` | Training in progress |
+| `completed` | Training finished successfully |
+| `crashed` | Training failed with an error (error message saved) |
+| `preempted` | Job was preempted by cluster (checkpoint saved) |
+| `interrupted` | User interrupted with Ctrl+C (checkpoint saved) |
+
+The `final_step` field shows how far training progressed, useful for debugging partial runs.
 
 **LSF cluster usage:**
 
@@ -115,6 +129,11 @@ Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 # Discover runs from local logs
 make discover-logs
 
+# Filter by status (completed, crashed, running, preempted, interrupted)
+make discover-logs opts="--status completed"
+make list-crashed   # Shortcut for crashed runs
+make list-completed # Shortcut for completed runs
+
 # Discover runs from Weights & Biases
 make discover-wandb wandb=wm-planning/mmbench opts="--limit 100"
 
@@ -136,6 +155,9 @@ Run `make help` to see all available targets:
 | `make test-sanity` | Run import sanity checks (inside Docker container) |
 | `make discover-logs` | Discover runs from local logs directory |
 | `make discover-wandb` | Discover runs from Weights & Biases |
+| `make list-crashed` | List all crashed runs (with error messages) |
+| `make list-completed` | List all completed runs |
+| `make list-running` | List all currently running runs |
 
 **Examples:**
 
