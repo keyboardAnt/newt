@@ -31,11 +31,11 @@ submit-expert:
 
 discover-logs:
 	@test -n "$(logs)" || (echo "Set logs=<path to logs dir>"; exit 1)
-	$(PYTHON) $(DISCOVER) logs $(logs) $(opts)
+	$(PYTHON) $(DISCOVER) logs $(logs) --print $(opts)
 
 discover-wandb:
 	@test -n "$(wandb)" || (echo "Set wandb=<entity/project>"; exit 1)
-	$(PYTHON) $(DISCOVER) wandb $(wandb) $(opts)
+	$(PYTHON) $(DISCOVER) wandb $(wandb) --print $(opts)
 
 test-sanity:
 	@echo "Running sanity checks (requires Docker container with torch)..."

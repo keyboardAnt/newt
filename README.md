@@ -112,10 +112,10 @@ Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 
 ```bash
 # Discover runs from local logs
-make discover-logs opts="--print"
+make discover-logs
 
 # Discover runs from Weights & Biases
-make discover-wandb wandb=wm-planning/mmbench opts="--print --limit 100"
+make discover-wandb wandb=wm-planning/mmbench opts="--limit 100"
 
 # Collect videos from trained tasks (run from tdmpc2/)
 cd tdmpc2 && python discover/collect_videos.py --min-progress 0.5
@@ -140,8 +140,9 @@ Run `make help` to see all available targets:
 
 ```bash
 make discover-logs                                    # Scan default logs directory
-make discover-logs logs=./my_logs opts="--print"     # Custom path with options
-make discover-wandb wandb=wm-planning/mmbench        # Scan W&B project
+make discover-logs logs=./my_logs                     # Custom logs path
+make discover-wandb wandb=wm-planning/mmbench         # Scan W&B project
+make discover-logs opts="--save runs.parquet"         # Save results to file
 ```
 
 ----
