@@ -1,12 +1,16 @@
 PYTHON ?= python
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 DISCOVER := $(ROOT)/tdmpc2/discover/runs.py
+STATUS := $(ROOT)/tdmpc2/discover/status.py
 
 .PHONY: help interactive submit-expert test-sanity \
-        discover list-completed list-running list-crashed list-local-only list-wandb-only
+        status status-debug discover list-completed list-running list-crashed list-local-only list-wandb-only
 
 help:
 	@echo "Targets:"
+	@echo "  status          Training progress overview"
+	@echo "  status-debug    Training status with debug info"
+	@echo ""
 	@echo "  discover        All runs (local + wandb)"
 	@echo "  list-completed  Completed runs"
 	@echo "  list-running    Running runs"
@@ -25,6 +29,12 @@ submit-expert:
 
 test-sanity:
 	@cd $(ROOT)/tdmpc2 && ./tests/test_imports.sh
+
+status:
+	@cd $(ROOT)/tdmpc2 && $(PYTHON) discover/status.py
+
+status-debug:
+	@cd $(ROOT)/tdmpc2 && $(PYTHON) discover/status.py --debug
 
 discover:
 	@$(PYTHON) $(DISCOVER) --print

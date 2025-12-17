@@ -126,6 +126,9 @@ Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 **CLI tools:**
 
 ```bash
+make status           # Training progress overview
+make status-debug     # Status with detailed debug info
+
 make discover         # All runs (local + wandb)
 make list-completed   # Completed runs
 make list-running     # Running runs
@@ -145,6 +148,8 @@ Run `make help` to see all available targets:
 
 | Target | Description |
 |--------|-------------|
+| `make status` | Training progress overview |
+| `make status-debug` | Status with detailed debug info |
 | `make discover` | All runs (local + wandb) |
 | `make list-completed` | Completed runs |
 | `make list-running` | Running runs |

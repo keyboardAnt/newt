@@ -61,6 +61,7 @@ Or use the interactive notebook: `discover/browse_runs.ipynb`
 ```
 discover/
 ├── runs.py          # Run discovery (local logs + W&B)
+├── status.py        # CLI for training status overview
 ├── cache.py         # Caching and data loading
 ├── analysis.py      # Data analysis functions
 ├── plots.py         # Visualization functions
@@ -70,6 +71,21 @@ discover/
 ```
 
 ## CLI Usage
+
+### Training Status
+
+Quick overview of training progress:
+
+```bash
+# From repo root:
+make status                         # Training progress overview
+make status-debug                   # With detailed debug info
+
+# Or directly:
+python status.py                    # Show training status summary
+python status.py --debug            # Show detailed debug info
+python status.py --limit 100        # Limit wandb runs fetched
+```
 
 ### Discover Runs
 

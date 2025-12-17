@@ -90,6 +90,22 @@ def load_cache(data_path: Path, meta_path: Path) -> Tuple[Optional["pd.DataFrame
     if not data_path.is_file() or not meta_path.is_file():
         return None, None
     df = pd.read_parquet(data_path)
+    
+    # Parse JSON strings back to dicts/lists
+    def from_json_cell(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return None
+        if isinstance(x, str):
+            try:
+                return json.loads(x)
+            except (json.JSONDecodeError, TypeError):
+                return x
+        return x
+    
+    for col in ['videos', 'tags', 'artifacts', 'summary']:
+        if col in df.columns:
+            df[col] = df[col].apply(from_json_cell)
+    
     try:
         ts = datetime.fromisoformat(meta_path.read_text().strip())
     except Exception:
@@ -102,11 +118,10 @@ def load_all_runs(
     *,
     wandb_project: str,
     wandb_limit: Optional[int] = None,
-    include_artifacts: bool = False,
 ) -> Tuple["pd.DataFrame", datetime]:
     """Load runs from both local logs and W&B."""
     local_df = discover_local_logs(logs_dir, limit=None)
-    wandb_df = discover_wandb_runs(wandb_project, limit=wandb_limit, include_artifacts=include_artifacts)
+    wandb_df = discover_wandb_runs(wandb_project, limit=wandb_limit)
     df_all = combine_runs(local_df, wandb_df)
     return df_all, latest_timestamp(df_all)
 
@@ -141,7 +156,6 @@ class RunsCache:
             self.logs_dir,
             wandb_project=self.wandb_project,
             wandb_limit=self.wandb_limit,
-            include_artifacts=False,
         )
 
         if cached_df is not None and cached_ts is not None and new_ts <= cached_ts:

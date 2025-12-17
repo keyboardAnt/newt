@@ -136,7 +136,7 @@ def _extract_task_from_tags(tags: List[str]) -> Optional[str]:
     return None
 
 
-def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Optional[int] = None) -> "pd.DataFrame":
+def discover_wandb_runs(project_path: str, limit: Optional[int]) -> "pd.DataFrame":
     pd = require_pandas()
     import time
     try:
@@ -146,7 +146,7 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
         raise SystemExit(1) from exc
 
     sys.stderr.write(f"Fetching runs from wandb ({project_path})...\n")
-    api = wandb.Api(timeout=timeout or 60)
+    api = wandb.Api()
     runs = api.runs(project_path, per_page=100)
     rows: List[dict] = []
     start_time = time.time()
@@ -155,11 +155,6 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
     for run in runs:
         if limit is not None and len(rows) >= limit:
             sys.stderr.write(f"\r  {len(rows)} runs (limit reached)             \n")
-            break
-        
-        elapsed = time.time() - start_time
-        if timeout and elapsed > timeout:
-            sys.stderr.write(f"\r  {len(rows)} runs (timeout after {timeout}s)   \n")
             break
 
         tags = list(run.tags) if run.tags else []
@@ -172,6 +167,13 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
                 task = run.config.get("task")
             except Exception:
                 pass
+        
+        # Get step from summary (needed for progress tracking)
+        summary = {}
+        try:
+            summary = dict(run.summary) if run.summary else {}
+        except Exception:
+            pass
 
         rows.append({
             "task": task,
@@ -180,6 +182,7 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
             "status": status,
             "updated_at": run.updated_at.isoformat() if getattr(run, "updated_at", None) else None,
             "url": run.url,
+            "summary": summary,
         })
         
         # Update progress every 0.5s
@@ -199,12 +202,12 @@ def discover_wandb_runs(project_path: str, limit: Optional[int], timeout: Option
     return df
 
 
-def discover(logs_dir: Optional[Path], wandb_project: Optional[str], limit: Optional[int], timeout: Optional[int] = None) -> "pd.DataFrame":
+def discover(logs_dir: Optional[Path], wandb_project: Optional[str], limit: Optional[int]) -> "pd.DataFrame":
     """Discover runs, joining local and wandb if both provided."""
     pd = require_pandas()
     
     local_df = discover_local_logs(logs_dir, limit) if logs_dir else pd.DataFrame()
-    wandb_df = discover_wandb_runs(wandb_project, limit, timeout) if wandb_project else pd.DataFrame()
+    wandb_df = discover_wandb_runs(wandb_project, limit) if wandb_project else pd.DataFrame()
     
     if local_df.empty:
         return wandb_df
@@ -245,7 +248,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser.add_argument("--local-only", action="store_true", help="Skip wandb")
     parser.add_argument("--wandb-only", action="store_true", help="Skip local logs")
     parser.add_argument("--limit", type=int, help="Limit runs per source")
-    parser.add_argument("--timeout", type=int, default=300, help="Timeout in seconds for wandb (default: 300)")
     parser.add_argument("--status", type=str, help="Filter by status")
     parser.add_argument("--found-in", type=str, choices=["both", "local", "wandb"], help="Filter by source")
     parser.add_argument("--save", type=Path, help="Save to file (csv/parquet)")
@@ -256,7 +258,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     logs_dir = None if args.wandb_only else args.logs
     wandb_project = None if args.local_only else args.wandb
     
-    df = discover(logs_dir, wandb_project, args.limit, args.timeout)
+    df = discover(logs_dir, wandb_project, args.limit)
     
     if args.status and not df.empty:
         df = df[df["status"] == args.status]
