@@ -254,8 +254,7 @@ class LandingEnv(gym.Env):
                 (x + self.heli_w, y + self.heli_h // 2),
                 (x + self.heli_w - 6, y + self.heli_h)]
         pygame.draw.polygon(surf, body_col, body)
-        pygame.draw.ppolygon = pygame.draw.polygon
-        pygame.draw.ppolygon(surf, accent, body, 2)
+        pygame.draw.polygon(surf, accent, body, 2)
         pygame.draw.line(surf, accent, (x + 6, y + self.heli_h // 2), (x - 8, y + self.heli_h // 2), 2)
         # skids
         pygame.draw.line(surf, (80, 80, 80), (x + 4, y + self.heli_h), (x + self.heli_w - 8, y + self.heli_h), 3)

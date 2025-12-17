@@ -273,7 +273,7 @@ class SpaceshipEnv(gym.Env):
             # rotate + translate
             px = x + np.cos(a + angle) * r
             py = y + np.sin(a + angle) * r
-            points.append((px, py))
+            points.append((int(px), int(py)))
         pygame.draw.polygon(surf, (100, 100, 100), points)
         pygame.draw.polygon(surf, (60, 60, 60), points, 2)
 
