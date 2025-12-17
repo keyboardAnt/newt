@@ -233,9 +233,8 @@ python train.py \\
     lsf_path.write_text(lsf_script)
     print(f"✅ Written LSF script to: {lsf_path}")
     
-    print(f"\n📋 To submit the eval jobs, run:")
-    print(f"   cd {output_dir.parent}")
-    print(f"   bsub < jobs/run_eval_need_videos.lsf")
+    print(f"\n📋 To submit the eval jobs:")
+    print(f"   make submit-eval")
     
     return task_list_path, lsf_path
 
