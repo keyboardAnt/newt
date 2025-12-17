@@ -156,10 +156,10 @@ df, timestamp, used_cache = cache.load(refresh=False)
 
 | Function | Description |
 |----------|-------------|
-| `tasks_ready_for_eval(df, logs_dir, ...)` | Find tasks ≥50% trained, check video status |
-| `generate_eval_script(tasks, output_dir, project_root)` | Generate LSF script for video eval jobs |
 | `collect_videos(df, logs_dir, output_dir, ...)` | Collect local videos into single directory |
 | `download_wandb_videos(df, output_dir, ...)` | Download videos directly from Wandb |
+| `tasks_ready_for_eval(df, logs_dir, ...)` | Find tasks ≥50% trained, check video status |
+| `generate_eval_script(tasks, output_dir, project_root)` | Generate LSF script for tasks missing videos |
 
 ## Interactive Notebook
 
@@ -185,21 +185,7 @@ The `browse_runs.ipynb` notebook provides:
    tasks_needing_attention(df, target_step=5_000_000)
    ```
 
-3. **Generate videos for trained tasks**:
-   ```python
-   from discover.eval import tasks_ready_for_eval, generate_eval_script
-   
-   ready_df, tasks_need_eval, _ = tasks_ready_for_eval(df, logs_dir, min_progress=0.5)
-   generate_eval_script(tasks_need_eval, output_dir, project_root)
-   ```
-   
-   Or use the CLI:
-   ```bash
-   make gen-eval     # Generate task list
-   make submit-eval  # Submit jobs
-   ```
-
-4. **Collect videos for presentation** (local or from Wandb):
+3. **Collect videos for presentation** (videos are generated during training with `save_video=True`):
    ```python
    # From local logs:
    from discover.eval import collect_videos
@@ -213,4 +199,10 @@ The `browse_runs.ipynb` notebook provides:
    ```bash
    # Then download to laptop:
    rsync -avz server:discover/videos_for_presentation/ ./videos/
+   ```
+
+4. **Generate videos for tasks missing them** (rarely needed - videos are generated during training):
+   ```bash
+   make gen-eval     # Find tasks without videos, generate LSF script
+   make submit-eval  # Submit eval jobs
    ```

@@ -137,7 +137,7 @@ make list-crashed     # Crashed runs
 make list-local-only  # Not synced to wandb
 make list-wandb-only  # Only on wandb (no local logs)
 
-# Collect videos from trained tasks
+# Collect videos from trained tasks (videos are generated during training)
 cd tdmpc2 && python discover/collect_videos.py --min-progress 0.5
 ```
 
@@ -159,8 +159,8 @@ Run `make help` to see all available targets:
 | `make list-wandb-only` | Runs only on wandb |
 | `make interactive` | Launch interactive GPU session |
 | `make submit-expert` | Submit expert training jobs |
-| `make gen-eval` | Generate eval task list (tasks needing videos) |
-| `make submit-eval` | Submit eval jobs for tasks in task list |
+| `make gen-eval` | Generate eval task list (for tasks missing videos) |
+| `make submit-eval` | Submit eval jobs (rarely needed - videos generated during training) |
 
 ----
 
