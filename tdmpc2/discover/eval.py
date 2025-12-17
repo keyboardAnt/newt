@@ -428,3 +428,56 @@ def download_wandb_videos(
     print("=" * 80)
     
     return manifest_df
+
+
+def main():
+    """CLI to generate eval script for tasks needing videos."""
+    import argparse
+    from .runs import discover
+    from .analysis import attach_max_step
+    
+    parser = argparse.ArgumentParser(description="Generate eval script for tasks needing videos.")
+    parser.add_argument("--min-progress", type=float, default=0.5, help="Minimum progress threshold (default: 0.5)")
+    parser.add_argument("--target-step", type=int, default=5_000_000, help="Target training steps (default: 5M)")
+    parser.add_argument("--limit", type=int, default=None, help="Limit wandb runs fetched")
+    args = parser.parse_args()
+    
+    # Paths
+    ROOT = Path(__file__).parents[1]  # tdmpc2/
+    logs_dir = ROOT / 'logs'
+    jobs_dir = ROOT / 'jobs'
+    wandb_project = "wm-planning/mmbench"
+    
+    print(f"Logs dir: {logs_dir}")
+    print(f"Wandb project: {wandb_project}")
+    print(f"Min progress: {args.min_progress*100:.0f}%")
+    print(f"Target step: {args.target_step:,}\n")
+    
+    # Discover runs
+    df_all = discover(logs_dir, wandb_project, args.limit)
+    if df_all.empty:
+        print("No runs found.")
+        return
+    
+    df_all = attach_max_step(df_all)
+    
+    # Find tasks ready for eval
+    ready_df, tasks_need_eval, tasks_with_videos = tasks_ready_for_eval(
+        df_all, logs_dir, 
+        target_step=args.target_step, 
+        min_progress=args.min_progress
+    )
+    
+    if not tasks_need_eval:
+        print("\n✅ All tasks at required progress already have videos!")
+        return
+    
+    # Generate eval script
+    generate_eval_script(tasks_need_eval, output_dir=jobs_dir, project_root=ROOT)
+    
+    print(f"\n📋 To submit the eval jobs:")
+    print(f"   make submit-eval")
+
+
+if __name__ == "__main__":
+    main()

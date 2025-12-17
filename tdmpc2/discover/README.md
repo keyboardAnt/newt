@@ -191,7 +191,12 @@ The `browse_runs.ipynb` notebook provides:
    
    ready_df, tasks_need_eval, _ = tasks_ready_for_eval(df, logs_dir, min_progress=0.5)
    generate_eval_script(tasks_need_eval, output_dir, project_root)
-   # Then: bsub < tdmpc2/jobs/run_eval_need_videos.lsf
+   ```
+   
+   Or use the CLI:
+   ```bash
+   make gen-eval     # Generate task list
+   make submit-eval  # Submit jobs
    ```
 
 4. **Collect videos for presentation** (local or from Wandb):

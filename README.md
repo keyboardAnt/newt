@@ -159,7 +159,8 @@ Run `make help` to see all available targets:
 | `make list-wandb-only` | Runs only on wandb |
 | `make interactive` | Launch interactive GPU session |
 | `make submit-expert` | Submit expert training jobs |
-| `make submit-eval` | Submit eval job for tasks needing videos |
+| `make gen-eval` | Generate eval task list (tasks needing videos) |
+| `make submit-eval` | Submit eval jobs for tasks in task list |
 
 ----
 
