@@ -91,6 +91,7 @@ The `final_step` field shows how far training progressed, useful for debugging p
 ```bash
 make interactive      # Launch interactive GPU session
 make submit-expert    # Submit all 200 expert training jobs
+make submit-eval      # Submit eval jobs to generate videos
 make test-sanity      # Verify imports (run inside container)
 ```
 
@@ -158,6 +159,7 @@ Run `make help` to see all available targets:
 | `make list-wandb-only` | Runs only on wandb |
 | `make interactive` | Launch interactive GPU session |
 | `make submit-expert` | Submit expert training jobs |
+| `make submit-eval` | Submit eval job for tasks needing videos |
 
 ----
 

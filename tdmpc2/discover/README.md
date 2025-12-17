@@ -158,7 +158,8 @@ df, timestamp, used_cache = cache.load(refresh=False)
 |----------|-------------|
 | `tasks_ready_for_eval(df, logs_dir, ...)` | Find tasks ≥50% trained, check video status |
 | `generate_eval_script(tasks, output_dir, project_root)` | Generate LSF script for video eval jobs |
-| `collect_videos(df, logs_dir, output_dir, ...)` | Collect videos into single directory |
+| `collect_videos(df, logs_dir, output_dir, ...)` | Collect local videos into single directory |
+| `download_wandb_videos(df, output_dir, ...)` | Download videos directly from Wandb |
 
 ## Interactive Notebook
 
@@ -193,8 +194,18 @@ The `browse_runs.ipynb` notebook provides:
    # Then: bsub < tdmpc2/jobs/run_eval_need_videos.lsf
    ```
 
-4. **Collect videos for presentation**:
+4. **Collect videos for presentation** (local or from Wandb):
+   ```python
+   # From local logs:
+   from discover.eval import collect_videos
+   collect_videos(df, logs_dir, output_dir, min_progress=0.5)
+   
+   # Or download from Wandb:
+   from discover.eval import download_wandb_videos
+   download_wandb_videos(df, output_dir, min_progress=0.5)
+   ```
+   
    ```bash
-   python discover/collect_videos.py --min-progress 0.5
+   # Then download to laptop:
    rsync -avz server:discover/videos_for_presentation/ ./videos/
    ```

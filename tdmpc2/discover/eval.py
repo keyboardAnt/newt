@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
@@ -129,18 +130,18 @@ def generate_eval_script(
 # Tasks: {len(tasks)}
 
 #BSUB -J newt-eval-videos[1-{len(tasks)}]
-#BSUB -q long-gpu
+#BSUB -q short-gpu
 #BSUB -n 1
 #BSUB -gpu "num=1"
 #BSUB -R "rusage[mem=16GB]"
 #BSUB -W 04:00
-#BSUB -o {project_root}/tdmpc2/logs/lsf/newt-eval-videos.%J.%I.log
-#BSUB -e {project_root}/tdmpc2/logs/lsf/newt-eval-videos.%J.%I.log
+#BSUB -o {project_root}/logs/lsf/newt-eval-videos.%J.%I.log
+#BSUB -e {project_root}/logs/lsf/newt-eval-videos.%J.%I.log
 
 #BSUB -app nvidia-gpu
 #BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0"
 
-cd {project_root}/tdmpc2
+cd {project_root}
 
 pip install -q "wandb[media]"
 
@@ -192,7 +193,7 @@ python train.py \\
   steps=1 \\
   num_envs=2 \\
   use_demos=False \\
-  tasks_fp={project_root}/tasks.json \\
+  tasks_fp={project_root.parent}/tasks.json \\
   exp_name="eval_${{RUN_ID}}" \\
   save_video=True \\
   env_mode=sync \\
@@ -287,6 +288,137 @@ def collect_videos(
     
     # Save manifest
     manifest_df = pd.DataFrame(collected)
+    manifest_path = output_dir / 'video_manifest.csv'
+    manifest_df.to_csv(manifest_path, index=False)
+    print(f"\n📄 Manifest saved to: {manifest_path}")
+    
+    print(f"\n📥 To download to your laptop:")
+    print(f"   rsync -avz <server>:{output_dir}/ ./presentation_videos/")
+    print("=" * 80)
+    
+    return manifest_df
+
+
+def download_wandb_videos(
+    df: "pd.DataFrame",
+    output_dir: Path,
+    wandb_project: str = "wm-planning/mmbench",
+    target_step: int = 5_000_000,
+    min_progress: float = 0.5,
+) -> Optional["pd.DataFrame"]:
+    """Download videos from Wandb for tasks that are min_progress% trained.
+    
+    Args:
+        df: DataFrame with run data (must include 'task', 'wandb_run_id', 'max_step')
+        output_dir: Directory to save downloaded videos
+        wandb_project: Wandb project path (entity/project)
+        target_step: Target training steps (default 5M)
+        min_progress: Minimum progress threshold (default 0.5 = 50%)
+    
+    Returns:
+        DataFrame with downloaded video info, or None if no videos found
+    """
+    pd = require_pandas()
+    
+    try:
+        import wandb
+    except ImportError:
+        print("❌ wandb is required. Install with: pip install wandb")
+        return None
+    
+    min_step = int(target_step * min_progress)
+    best = best_step_by_task(df)
+    ready = best[best['max_step'] >= min_step].copy()
+    
+    if ready.empty:
+        print(f"❌ No tasks at ≥{int(min_progress*100)}% progress.")
+        return None
+    
+    # Filter to runs that have wandb_run_id
+    wandb_ready = ready[ready['wandb_run_id'].notna()].copy()
+    if wandb_ready.empty:
+        print("❌ No Wandb runs found for tasks at required progress.")
+        return None
+    
+    print(f"🔍 Checking {len(wandb_ready)} tasks for videos on Wandb...")
+    
+    api = wandb.Api(timeout=60)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    downloaded = []
+    
+    for idx, row in wandb_ready.iterrows():
+        task = row['task']
+        run_id = row['wandb_run_id']
+        max_step = row['max_step']
+        
+        try:
+            run = api.run(f"{wandb_project}/{run_id}")
+            
+            # Find video files in the run
+            files = run.files()
+            video_files = [f for f in files if f.name.endswith('.mp4')]
+            
+            if not video_files:
+                sys.stderr.write(f"  {task}: no videos\n")
+                continue
+            
+            # Download the latest/best video (prefer eval_video if exists)
+            eval_videos = [f for f in video_files if 'eval' in f.name.lower()]
+            video_file = eval_videos[-1] if eval_videos else video_files[-1]
+            
+            dst_name = f"{task}_{int(max_step)}.mp4"
+            dst_path = output_dir / dst_name
+            
+            sys.stderr.write(f"  {task}: downloading {video_file.name}...")
+            sys.stderr.flush()
+            
+            video_file.download(root=str(output_dir), replace=True)
+            downloaded_path = output_dir / video_file.name
+            
+            # Rename to standardized name
+            if downloaded_path.exists() and downloaded_path != dst_path:
+                if dst_path.exists():
+                    dst_path.unlink()
+                downloaded_path.rename(dst_path)
+            
+            sys.stderr.write(" ✓\n")
+            
+            downloaded.append({
+                'task': task,
+                'step': int(max_step),
+                'progress': 100 * max_step / target_step,
+                'filename': dst_name,
+                'wandb_run_id': run_id,
+                'source_file': video_file.name,
+                'dest_path': str(dst_path),
+            })
+            
+        except Exception as e:
+            sys.stderr.write(f"  {task}: error - {e}\n")
+            continue
+    
+    if not downloaded:
+        print("\n❌ No videos could be downloaded from Wandb.")
+        print("   Videos may not have been logged, or runs may have been deleted.")
+        return None
+    
+    print("\n" + "=" * 80)
+    print(f"{'VIDEOS DOWNLOADED FROM WANDB':^80}")
+    print("=" * 80)
+    print(f"\n📁 Output directory: {output_dir}")
+    print(f"   Total videos: {len(downloaded)}")
+    
+    print(f"\n{'─' * 80}")
+    print(f"{'Task':<45} {'Step':>12} {'Progress':>10}")
+    print("─" * 80)
+    for v in downloaded:
+        print(f"  {v['task']:<43} {v['step']:>12,} {v['progress']:>9.1f}%")
+    print("─" * 80)
+    
+    # Save manifest
+    manifest_df = pd.DataFrame(downloaded)
     manifest_path = output_dir / 'video_manifest.csv'
     manifest_df.to_csv(manifest_path, index=False)
     print(f"\n📄 Manifest saved to: {manifest_path}")
