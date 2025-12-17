@@ -136,9 +136,42 @@ def _extract_task_from_tags(tags: List[str]) -> Optional[str]:
     return None
 
 
+def _process_wandb_run(run) -> dict:
+    """Extract data from a single wandb run (called in parallel)."""
+    tags = list(run.tags) if run.tags else []
+    task = _extract_task_from_tags(tags)
+    status = WANDB_STATE_TO_STATUS.get(run.state, run.state)
+    
+    # Fallback: get task from config if not in tags (slower but needed for older runs)
+    if task is None:
+        try:
+            task = run.config.get("task")
+        except Exception:
+            pass
+    
+    # Get step from summary (needed for progress tracking)
+    summary = {}
+    try:
+        summary = dict(run.summary) if run.summary else {}
+    except Exception:
+        pass
+
+    return {
+        "task": task,
+        "wandb_run_id": run.id,
+        "exp_name": run.name,
+        "status": status,
+        "updated_at": run.updated_at.isoformat() if getattr(run, "updated_at", None) else None,
+        "url": run.url,
+        "summary": summary,
+    }
+
+
 def discover_wandb_runs(project_path: str, limit: Optional[int]) -> "pd.DataFrame":
     pd = require_pandas()
     import time
+    from concurrent.futures import ThreadPoolExecutor
+    
     try:
         import wandb  # type: ignore
     except ImportError as exc:
@@ -147,55 +180,39 @@ def discover_wandb_runs(project_path: str, limit: Optional[int]) -> "pd.DataFram
 
     sys.stderr.write(f"Fetching runs from wandb ({project_path})...\n")
     api = wandb.Api()
-    runs = api.runs(project_path, per_page=100)
-    rows: List[dict] = []
+    runs_iter = api.runs(project_path, per_page=100)
+    
+    # Collect run objects first (fast - just the iterator)
+    sys.stderr.write("  Listing runs...")
+    sys.stderr.flush()
     start_time = time.time()
-    last_update = start_time
-
-    for run in runs:
-        if limit is not None and len(rows) >= limit:
-            sys.stderr.write(f"\r  {len(rows)} runs (limit reached)             \n")
+    run_objects = []
+    for run in runs_iter:
+        run_objects.append(run)
+        if limit is not None and len(run_objects) >= limit:
             break
-
-        tags = list(run.tags) if run.tags else []
-        task = _extract_task_from_tags(tags)
-        status = WANDB_STATE_TO_STATUS.get(run.state, run.state)
-        
-        # Fallback: get task from config if not in tags (slower but needed for older runs)
-        if task is None and hasattr(run, 'config'):
-            try:
-                task = run.config.get("task")
-            except Exception:
-                pass
-        
-        # Get step from summary (needed for progress tracking)
-        summary = {}
-        try:
-            summary = dict(run.summary) if run.summary else {}
-        except Exception:
-            pass
-
-        rows.append({
-            "task": task,
-            "wandb_run_id": run.id,
-            "exp_name": run.name,
-            "status": status,
-            "updated_at": run.updated_at.isoformat() if getattr(run, "updated_at", None) else None,
-            "url": run.url,
-            "summary": summary,
-        })
-        
-        # Update progress every 0.5s
-        now = time.time()
-        if now - last_update > 0.5:
-            rate = len(rows) / (now - start_time) if now > start_time else 0
-            sys.stderr.write(f"\r  {len(rows)} runs fetched ({rate:.0f}/s, {now - start_time:.0f}s elapsed)...")
+        if len(run_objects) % 100 == 0:
+            sys.stderr.write(f"\r  Listing runs... {len(run_objects)}")
             sys.stderr.flush()
-            last_update = now
-
+    
+    list_time = time.time() - start_time
+    sys.stderr.write(f"\r  Listed {len(run_objects)} runs in {list_time:.1f}s\n")
+    
+    if not run_objects:
+        return pd.DataFrame()
+    
+    # Process run details in parallel (this is the slow part - API calls for config/summary)
+    sys.stderr.write("  Fetching run details (parallel)...\n")
+    sys.stderr.flush()
+    start_time = time.time()
+    
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        rows = list(executor.map(_process_wandb_run, run_objects))
+    
     elapsed = time.time() - start_time
     rate = len(rows) / elapsed if elapsed > 0 else 0
-    sys.stderr.write(f"\r  {len(rows)} runs fetched in {elapsed:.1f}s ({rate:.0f}/s)        \n")
+    sys.stderr.write(f"  Fetched {len(rows)} run details in {elapsed:.1f}s ({rate:.0f}/s)\n")
+    
     df = pd.DataFrame(rows)
     if not df.empty:
         df["found_in"] = "wandb"
