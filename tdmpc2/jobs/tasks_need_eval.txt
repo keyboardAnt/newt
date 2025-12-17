@@ -1,5 +1,5 @@
-ms-ant-walk
 ms-ant-run
+ms-ant-walk
 ms-cartpole-balance
 ms-cartpole-swingup
 ms-hopper-stand
