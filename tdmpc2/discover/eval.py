@@ -22,30 +22,59 @@ def require_pandas():
     return pd
 
 
-def find_task_videos(task: str, logs_dir: Path) -> List[str]:
-    """Find all videos for a task by scanning run directories.
+def find_run_videos(run_dir: Path) -> List[Path]:
+    """Find all video files in a run directory.
     
-    With run-first structure (logs/<run_id>/), we scan all runs and look for
-    videos that match the task name in their filename or subdirectory.
+    Checks multiple locations where videos might be stored:
+    - wandb/run-*/files/media/videos/**/*.mp4 (wandb synced)
+    - videos/*.mp4 (direct saves)
     """
+    videos = []
+    # Wandb media directory (most common location)
+    videos.extend(run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
+    # Direct video saves
+    video_dir = run_dir / "videos"
+    if video_dir.is_dir():
+        videos.extend(video_dir.glob("*.mp4"))
+    return sorted(videos)
+
+
+def find_task_videos(task: str, logs_dir: Path) -> List[str]:
+    """Find videos for a task by checking run_info.yaml in each run directory.
+    
+    Since video filenames don't contain the task name, we use run_info.yaml
+    to identify which runs belong to the task, then collect their videos.
+    """
+    import yaml
+    
     if not logs_dir.is_dir():
         return []
+    
     videos = []
-    # Scan all run directories for videos
     for run_dir in logs_dir.iterdir():
         if not run_dir.is_dir():
             continue
-        # Check videos/<task>/*.mp4 or videos/*<task>*.mp4
-        task_video_dir = run_dir / "videos" / task
-        if task_video_dir.is_dir():
-            videos.extend(task_video_dir.glob("*.mp4"))
-        # Also check for task name in video filename
-        video_dir = run_dir / "videos"
-        if video_dir.is_dir():
-            videos.extend(p for p in video_dir.glob(f"*{task}*.mp4"))
-        # Check wandb media directory
-        videos.extend(run_dir.glob(f"wandb/run-*/files/media/videos/**/*{task}*.mp4"))
-    return sorted(set(str(v) for v in videos))
+        
+        # Check if this run is for the target task
+        run_info_path = run_dir / "run_info.yaml"
+        if run_info_path.exists():
+            try:
+                info = yaml.safe_load(run_info_path.read_text()) or {}
+                run_tasks = info.get("tasks", [info.get("task")])
+                if task not in run_tasks:
+                    continue
+            except Exception:
+                continue
+        else:
+            # No run_info - check if task is in run directory name
+            if task not in run_dir.name:
+                continue
+        
+        # Found a run for this task - collect its videos
+        run_videos = find_run_videos(run_dir)
+        videos.extend(str(v) for v in run_videos)
+    
+    return sorted(set(videos))
 
 
 def tasks_ready_for_eval(
