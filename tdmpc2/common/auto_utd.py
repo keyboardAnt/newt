@@ -337,10 +337,9 @@ class AdaptiveUTD:
             'auto_utd/dry_run': int(self.dry_run),
         }
         
-        # Only log GPU utilization if pynvml is available
+        # Only log GPU utilization if pynvml is available (always get fresh value)
         if self._gpu_handle is not None:
-            gpu_util = getattr(self, '_last_gpu_util', self.get_gpu_utilization())
-            metrics['auto_utd/gpu_utilization'] = gpu_util
+            metrics['auto_utd/gpu_utilization'] = self.get_gpu_utilization()
         
         return metrics
     
