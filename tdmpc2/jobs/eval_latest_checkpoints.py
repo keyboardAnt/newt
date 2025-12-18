@@ -72,7 +72,7 @@ def main() -> None:
             f"exp_name={eval_exp_name}",
             "save_video=True",
             "env_mode=sync",
-            "compile=False",
+            "compile=False",  # Keep disabled for eval (compilation overhead > 1-step runtime)
         ]
 
         # Run eval; raise if it fails so you see the error immediately.
