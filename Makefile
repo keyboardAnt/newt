@@ -3,7 +3,7 @@ ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 DISCOVER := $(ROOT)/tdmpc2/discover/runs.py
 STATUS := $(ROOT)/tdmpc2/discover/status.py
 
-.PHONY: help interactive submit-expert gen-eval submit-eval test-sanity \
+.PHONY: help interactive interactive-nonexclusive submit-expert gen-eval submit-eval test-sanity \
         status status-debug discover list-completed list-running list-crashed list-local-only list-wandb-only
 
 help:
@@ -18,13 +18,17 @@ help:
 	@echo "  list-local-only Runs not synced to wandb"
 	@echo "  list-wandb-only Runs only on wandb"
 	@echo ""
-	@echo "  interactive     Launch interactive GPU session"
-	@echo "  submit-expert   Submit expert training jobs"
-	@echo "  gen-eval        Generate eval task list (tasks needing videos)"
-	@echo "  submit-eval     Submit eval jobs for tasks in task list"
+	@echo "  interactive              Launch interactive GPU session (exclusive mode)"
+	@echo "  interactive-nonexclusive Launch interactive GPU session (shared mode, for ManiSkill)"
+	@echo "  submit-expert            Submit expert training jobs"
+	@echo "  gen-eval                 Generate eval task list (tasks needing videos)"
+	@echo "  submit-eval              Submit eval jobs for tasks in task list"
 
 interactive:
 	@cd $(ROOT)/tdmpc2 && ./jobs/interactive.sh
+
+interactive-nonexclusive:
+	@cd $(ROOT)/tdmpc2 && ./jobs/interactive_nonexclusive.sh
 
 submit-expert:
 	@cd $(ROOT)/tdmpc2 && ./jobs/submit_expert_array.sh

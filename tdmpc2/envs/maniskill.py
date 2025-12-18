@@ -1,6 +1,10 @@
 import warnings
 warnings.filterwarnings('ignore')
 
+# Disable SAPIEN renderer before importing ManiSkill (prevents Vulkan errors in Docker)
+import os
+os.environ.setdefault('SAPIEN_NO_DISPLAY', '1')
+
 import gymnasium as gym
 import numpy as np
 import mani_skill.envs
@@ -360,11 +364,6 @@ def make_env(cfg):
 	task_cfg = MANISKILL_TASKS[cfg.task]
 	# Only enable rendering when video saving is requested (avoids GPU buffer errors in headless envs)
 	render_mode = 'rgb_array' if cfg.get('save_video', False) else None
-	
-	# Disable SAPIEN GPU renderer when not rendering (prevents Vulkan initialization errors)
-	import os
-	if not render_mode:
-		os.environ['MS_RENDERER_TYPE'] = 'none'
 	
 	env = gym.make(
 		task_cfg['env'],

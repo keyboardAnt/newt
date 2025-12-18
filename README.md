@@ -89,10 +89,11 @@ The `final_step` field shows how far training progressed, useful for debugging p
 **LSF cluster usage:**
 
 ```bash
-make interactive      # Launch interactive GPU session
-make submit-expert    # Submit all 200 expert training jobs
-make submit-eval      # Submit eval jobs to generate videos
-make test-sanity      # Verify imports (run inside container)
+make interactive              # Launch interactive GPU session (exclusive mode)
+make interactive-nonexclusive # Launch interactive GPU session (shared mode, for ManiSkill)
+make submit-expert            # Submit all 200 expert training jobs
+make submit-eval              # Submit eval jobs to generate videos
+make test-sanity              # Verify imports (run inside container)
 ```
 
 `submit-expert` splits jobs across queues (long-gpu first for fewer interruptions):
@@ -157,7 +158,8 @@ Run `make help` to see all available targets:
 | `make list-crashed` | Crashed runs |
 | `make list-local-only` | Runs not synced to wandb |
 | `make list-wandb-only` | Runs only on wandb |
-| `make interactive` | Launch interactive GPU session |
+| `make interactive` | Launch interactive GPU session (exclusive mode) |
+| `make interactive-nonexclusive` | Launch interactive GPU session (shared mode, for ManiSkill) |
 | `make submit-expert` | Submit expert training jobs |
 | `make gen-eval` | Generate eval task list (for tasks missing videos) |
 | `make submit-eval` | Submit eval jobs (rarely needed - videos generated during training) |
