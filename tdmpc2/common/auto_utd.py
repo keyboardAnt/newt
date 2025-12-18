@@ -33,7 +33,11 @@ try:
     import pynvml
     pynvml.nvmlInit()
     PYNVML_AVAILABLE = True
-except Exception:
+except ImportError:
+    PYNVML_AVAILABLE = False
+except Exception as e:
+    # pynvml installed but init failed
+    print(colored(f'[Auto-UTD] pynvml init failed: {e}. GPU utilization monitoring disabled.', 'yellow'))
     PYNVML_AVAILABLE = False
 
 
@@ -131,8 +135,11 @@ class AdaptiveUTD:
         if PYNVML_AVAILABLE:
             try:
                 self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
-            except Exception:
-                pass
+            except Exception as e:
+                if rank == 0:
+                    print(colored(f'[Auto-UTD] Failed to get GPU handle: {e}', 'yellow'))
+        elif rank == 0 and self.enabled:
+            print(colored('[Auto-UTD] pynvml not available. Install with: pip install pynvml', 'yellow'))
     
     def set_step(self, step: int):
         """Update current step counter."""
@@ -306,7 +313,6 @@ class AdaptiveUTD:
     def get_metrics(self) -> dict:
         """Return current metrics for W&B logging."""
         mem_frac, mem_alloc, mem_total = self.get_memory_info()
-        gpu_util = getattr(self, '_last_gpu_util', self.get_gpu_utilization())
         step_time = getattr(self, '_last_step_time_avg', 0.0)
         
         metrics = {
@@ -315,8 +321,7 @@ class AdaptiveUTD:
             'auto_utd/utd_ratio_vs_initial': self.utd / self.initial_utd,
             'auto_utd/update_fraction': self.last_update_fraction,
             
-            # GPU metrics
-            'auto_utd/gpu_utilization': gpu_util,
+            # GPU metrics (only if pynvml available)
             'auto_utd/step_time_seconds': step_time,
             
             # Memory metrics  
@@ -331,6 +336,11 @@ class AdaptiveUTD:
             'auto_utd/num_adjustments': len(self.adjustment_log),
             'auto_utd/dry_run': int(self.dry_run),
         }
+        
+        # Only log GPU utilization if pynvml is available
+        if self._gpu_handle is not None:
+            gpu_util = getattr(self, '_last_gpu_util', self.get_gpu_utilization())
+            metrics['auto_utd/gpu_utilization'] = gpu_util
         
         return metrics
     
@@ -347,7 +357,9 @@ class AdaptiveUTD:
         print(f'  Decrease when:    update_frac > {self.target_fraction * 1.3:.0%} (overloaded)')
         print(f'  Memory headroom:  {self.memory_headroom:.0%} (decrease if mem > {1 - self.memory_headroom:.0%})')
         print(f'  Check interval:   every {self.adjustment_interval:,} steps')
-        print(f'  Heartbeat:        every {self._heartbeat_interval * self.adjustment_interval:,} steps\n')
+        print(f'  Heartbeat:        every {self._heartbeat_interval * self.adjustment_interval:,} steps')
+        gpu_status = '✓ enabled' if self._gpu_handle is not None else '✗ disabled (install pynvml)'
+        print(f'  GPU util monitor: {gpu_status}\n')
     
     def get_effective_config(self) -> dict:
         """
