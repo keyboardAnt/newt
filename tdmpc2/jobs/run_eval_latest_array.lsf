@@ -5,7 +5,7 @@
 #BSUB -J newt-eval[1-200]               # 200 jobs (one per task)
 #BSUB -q "short-gpu long-gpu"           # Multi-queue: try short-gpu first (180 GPU limit)
 #BSUB -n 1                              # 1 CPU core
-#BSUB -gpu "num=1"                      # 1 GPU
+#BSUB -gpu "num=1:mode=exclusive_process"  # 1 GPU (exclusive)
 #BSUB -R "rusage[mem=16GB]"             # 16 GB RAM
 #BSUB -W 04:00                          # walltime per eval job (under 6h for short-gpu)
 #BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval.%J.%I.log

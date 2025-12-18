@@ -6,7 +6,7 @@
 #BSUB -J newt-eval-videos[1-6]
 #BSUB -q short-gpu
 #BSUB -n 1
-#BSUB -gpu "num=1"
+#BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=16GB]"
 #BSUB -W 04:00
 #BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval-videos.%J.%I.log

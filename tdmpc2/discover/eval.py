@@ -161,7 +161,7 @@ def generate_eval_script(
 #BSUB -J newt-eval-videos[1-{len(tasks)}]
 #BSUB -q short-gpu
 #BSUB -n 1
-#BSUB -gpu "num=1"
+#BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=16GB]"
 #BSUB -W 04:00
 #BSUB -o {project_root}/logs/lsf/newt-eval-videos.%J.%I.log

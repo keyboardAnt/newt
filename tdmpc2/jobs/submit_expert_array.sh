@@ -12,7 +12,7 @@ mkdir -p logs/lsf
 echo "Submitting jobs 1-70 to long-gpu (48h walltime)..."
 bsub -J "newt-expert[1-70]" \
   -q long-gpu \
-  -n 1 -gpu "num=1" -R "rusage[mem=32GB]" -W 48:00 -r \
+  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB]" -W 48:00 -r \
   -o logs/lsf/newt-expert.%J.%I.log \
   -e logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
@@ -23,7 +23,7 @@ bsub -J "newt-expert[1-70]" \
 echo "Submitting jobs 71-200 to short-gpu (6h walltime)..."
 bsub -J "newt-expert[71-200]" \
   -q short-gpu \
-  -n 1 -gpu "num=1" -R "rusage[mem=32GB]" -W 5:45 -r \
+  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB]" -W 5:45 -r \
   -o logs/lsf/newt-expert.%J.%I.log \
   -e logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
