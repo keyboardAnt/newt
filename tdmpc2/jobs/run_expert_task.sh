@@ -10,6 +10,13 @@ pip install -q "wandb[media]"
 TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 
+# Disable video for ManiSkill tasks (SAPIEN/Vulkan rendering not supported in Docker)
+SAVE_VIDEO=True
+if [[ "$TASK" == ms-* ]]; then
+  SAVE_VIDEO=False
+  echo "Disabling video for ManiSkill task (Docker Vulkan limitation)"
+fi
+
 python train.py \
   task="${TASK}" \
   model_size=B \
@@ -18,5 +25,5 @@ python train.py \
   use_demos=False \
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
   exp_name="expert_${TASK}" \
-  save_video=True \
+  save_video="${SAVE_VIDEO}" \
   compile=False
