@@ -9,13 +9,14 @@ FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_DRIVER_CAPABILITIES=all
 
-# packages
+# packages (including EGL for headless GPU rendering - needed by ManiSkill/SAPIEN)
 RUN apt-get -y update && \
     apt-get install -y --no-install-recommends build-essential git nano rsync vim tree curl wget \
     swig ffmpeg unzip htop tmux xvfb ca-certificates bash-completion libjpeg-dev libpng-dev \
     libssl-dev libcurl4-openssl-dev libopenmpi-dev zlib1g-dev qtbase5-dev qtdeclarative5-dev \
     libglib2.0-0 libglu1-mesa-dev libgl1-mesa-dev libvulkan1 libgl1-mesa-glx libosmesa6 \
-    libosmesa6-dev libglew-dev mesa-utils && \
+    libosmesa6-dev libglew-dev mesa-utils \
+    libegl1-mesa-dev libegl1 libgles2-mesa-dev vulkan-tools && \
     apt-get clean && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* && \
@@ -51,6 +52,11 @@ COPY .maniskill /root/.maniskill
 # misc environment variables for convenience
 ENV TORCH_DISTRIBUTED_TIMEOUT=1800
 ENV MS_SKIP_ASSET_DOWNLOAD_PROMPT=1
+
+# EGL/headless rendering configuration for ManiSkill/SAPIEN
+ENV PYOPENGL_PLATFORM=egl
+ENV MUJOCO_GL=egl
+ENV __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 # success!
 RUN echo "Successfully built Newt Docker image!"

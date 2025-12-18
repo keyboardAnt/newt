@@ -358,14 +358,16 @@ def make_env(cfg):
 	if cfg.task not in MANISKILL_TASKS:
 		raise ValueError('Unknown task:', cfg.task)
 	task_cfg = MANISKILL_TASKS[cfg.task]
+	# Only enable rendering when video saving is requested (avoids GPU buffer errors in headless envs)
+	render_mode = 'rgb_array' if cfg.get('save_video', False) else None
 	env = gym.make(
 		task_cfg['env'],
 		obs_mode='state',
 		control_mode=task_cfg['control_mode'],
 		num_envs=1,
-		render_mode='rgb_array',
-		sensor_configs=dict(width=cfg.render_size, height=cfg.render_size),
-		human_render_camera_configs=dict(width=cfg.render_size, height=cfg.render_size),
+		render_mode=render_mode,
+		sensor_configs=dict(width=cfg.render_size, height=cfg.render_size) if render_mode else None,
+		human_render_camera_configs=dict(width=cfg.render_size, height=cfg.render_size) if render_mode else None,
 		reconfiguration_freq=None,
 		sim_backend='auto',
 	)
