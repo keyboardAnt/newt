@@ -328,9 +328,9 @@ class BirdAttackEnv(gym.Env):
 
         # birds (draw as "V")
         for bx, by, hp in self.birds:
-            points = [(bx, by),
-                    (bx+self.bird_w//2, by+self.bird_h),
-                    (bx+self.bird_w, by)]
+            points = [(int(bx), int(by)),
+                    (int(bx)+self.bird_w//2, int(by)+self.bird_h),
+                    (int(bx)+self.bird_w, int(by))]
             if hp == 2:
                 pygame.draw.polygon(self._surface, (200,200,200), points)   # filled
             else:

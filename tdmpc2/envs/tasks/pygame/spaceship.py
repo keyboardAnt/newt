@@ -256,7 +256,7 @@ class SpaceshipEnv(gym.Env):
             ]
 
             for color, f in layers:
-                tip_x = cx - flame_len * f
+                tip_x = int(cx - flame_len * f)
                 width = int(flame_width * f)
                 pygame.draw.polygon(
                     surf, color,
