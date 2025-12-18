@@ -1,6 +1,1 @@
-ms-ant-walk
-ms-ant-run
-ms-cartpole-balance
-ms-cartpole-swingup
-ms-hopper-stand
 spinner-jump
