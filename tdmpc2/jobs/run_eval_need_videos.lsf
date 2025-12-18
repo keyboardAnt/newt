@@ -1,6 +1,6 @@
 #!/bin/bash
 # Auto-generated eval script for tasks needing videos
-# Generated: 2025-12-17T18:27:49.096377
+# Generated: 2025-12-18T20:13:40.263766
 # Tasks: 6
 
 #BSUB -J newt-eval-videos[1-6]
