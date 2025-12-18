@@ -25,7 +25,7 @@ class Config:
 	episodic: bool = False
 	num_envs: int = 10
 	env_mode: str = "async"
-	tasks_fp: str = "<path>/<to>/tasks.json"
+	tasks_fp: str = "../tasks.json"  # Relative to tdmpc2/ directory
 
 	# evaluation
 	checkpoint: Optional[str] = None
