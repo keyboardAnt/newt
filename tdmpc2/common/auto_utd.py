@@ -26,6 +26,15 @@ from time import time
 from collections import deque
 from dataclasses import dataclass, asdict
 from typing import Optional, List
+from termcolor import colored
+
+# Try to import pynvml for GPU utilization metrics
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    PYNVML_AVAILABLE = True
+except Exception:
+    PYNVML_AVAILABLE = False
 
 
 @dataclass
@@ -112,6 +121,16 @@ class AdaptiveUTD:
         self._memory_samples = deque(maxlen=50)
         self._memory_warnings = 0
         self._oom_near_misses = 0
+        
+        # === OBSERVABILITY: Heartbeat and GPU monitoring ===
+        self._check_count = 0
+        self._heartbeat_interval = 10  # Print status every N checks
+        self._gpu_handle = None
+        if PYNVML_AVAILABLE:
+            try:
+                self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
+            except Exception:
+                pass
     
     def set_step(self, step: int):
         """Update current step counter."""
@@ -137,6 +156,16 @@ class AdaptiveUTD:
             return allocated / total, allocated / 1e9, total / 1e9
         except:
             return 0.5, 0.0, 0.0  # Fallback
+    
+    def get_gpu_utilization(self) -> float:
+        """Get current GPU compute utilization (0-1)."""
+        if self._gpu_handle is not None:
+            try:
+                util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
+                return util.gpu / 100.0
+            except Exception:
+                pass
+        return 0.0  # Fallback if not available
     
     def check_memory_safety(self) -> dict:
         """
@@ -182,6 +211,7 @@ class AdaptiveUTD:
             return {}
         
         self._steps_since_adjust = 0
+        self._check_count += 1
         
         # Calculate time fractions
         avg_update_time = sum(self._update_times) / len(self._update_times)
@@ -192,9 +222,12 @@ class AdaptiveUTD:
         
         update_fraction = avg_update_time / avg_step_time
         mem_frac, mem_alloc, mem_total = self.get_memory_info()
+        gpu_util = self.get_gpu_utilization()
         
         self.last_update_fraction = update_fraction
         self.last_memory_fraction = mem_frac
+        self._last_gpu_util = gpu_util
+        self._last_step_time_avg = avg_step_time
         
         old_utd = self.utd
         reason = None
@@ -219,6 +252,17 @@ class AdaptiveUTD:
         else:
             new_utd = self.utd
         
+        # === OBSERVABILITY: Heartbeat logging ===
+        if self.rank == 0 and self._check_count % self._heartbeat_interval == 0:
+            status = 'stable' if new_utd == old_utd else reason
+            dry_tag = '[DRY-RUN] ' if self.dry_run else ''
+            print(colored(
+                f'[Auto-UTD] {dry_tag}step {self._current_step:,}: '
+                f'UTD={self.utd:.4f}, update_frac={update_fraction:.0%}, '
+                f'mem={mem_frac:.0%}, gpu={gpu_util:.0%} ({status})',
+                'cyan'
+            ))
+        
         # Only log if there's a change
         if new_utd != old_utd:
             adjustment = UTDAdjustment(
@@ -233,6 +277,16 @@ class AdaptiveUTD:
                 memory_total_gb=mem_total,
             )
             self.adjustment_log.append(adjustment)
+            
+            # Print adjustment (always, not just on heartbeat)
+            if self.rank == 0:
+                dry_tag = '[DRY-RUN] ' if self.dry_run else ''
+                color = 'yellow' if reason in ('overloaded', 'memory_pressure') else 'green'
+                print(colored(
+                    f'[Auto-UTD] {dry_tag}{reason}: UTD {old_utd:.4f} → {new_utd:.4f} '
+                    f'(update_frac={update_fraction:.0%}, mem={mem_frac:.0%})',
+                    color
+                ))
             
             # Apply change (unless dry run)
             if not self.dry_run:
@@ -250,12 +304,18 @@ class AdaptiveUTD:
     def get_metrics(self) -> dict:
         """Return current metrics for W&B logging."""
         mem_frac, mem_alloc, mem_total = self.get_memory_info()
+        gpu_util = getattr(self, '_last_gpu_util', self.get_gpu_utilization())
+        step_time = getattr(self, '_last_step_time_avg', 0.0)
         
         metrics = {
             # Core metrics
             'auto_utd/utd': self.utd,
             'auto_utd/utd_ratio_vs_initial': self.utd / self.initial_utd,
             'auto_utd/update_fraction': self.last_update_fraction,
+            
+            # GPU metrics
+            'auto_utd/gpu_utilization': gpu_util,
+            'auto_utd/step_time_seconds': step_time,
             
             # Memory metrics  
             'auto_utd/memory_fraction': mem_frac,
@@ -271,6 +331,21 @@ class AdaptiveUTD:
         }
         
         return metrics
+    
+    def print_config(self):
+        """Print active thresholds at startup for transparency."""
+        if self.rank != 0:
+            return
+        
+        mode = 'DRY-RUN' if self.dry_run else 'ENABLED'
+        print(colored(f'\n[Auto-UTD] Configuration ({mode}):', 'cyan', attrs=['bold']))
+        print(f'  UTD range:        {self.min_utd:.3f} - {self.max_utd:.3f} (initial: {self.initial_utd:.3f})')
+        print(f'  Target update%:   {self.target_fraction:.0%}')
+        print(f'  Increase when:    update_frac < {self.target_fraction * 0.7:.0%} (underutilized)')
+        print(f'  Decrease when:    update_frac > {self.target_fraction * 1.3:.0%} (overloaded)')
+        print(f'  Memory headroom:  {self.memory_headroom:.0%} (decrease if mem > {1 - self.memory_headroom:.0%})')
+        print(f'  Check interval:   every {self.adjustment_interval:,} steps')
+        print(f'  Heartbeat:        every {self._heartbeat_interval * self.adjustment_interval:,} steps\n')
     
     def get_effective_config(self) -> dict:
         """

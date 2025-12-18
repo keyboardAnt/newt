@@ -64,8 +64,7 @@ class Trainer():
 			print(f'Update frequency: {self._update_freq:,}')
 			print(f'Episodes per update frequency: {self._eps_per_update_freq:,}')
 			if cfg.get('auto_utd', False):
-				mode = 'DRY-RUN' if cfg.get('auto_utd_dry_run', False) else 'ENABLED'
-				print(colored(f'Auto-UTD scaling: {mode} (max={cfg.get("auto_utd_max", 0.5)})', 'cyan', attrs=['bold']))
+				self._auto_utd.print_config()
 
 	def common_metrics(self):
 		"""Return a dictionary of current metrics."""
@@ -392,16 +391,8 @@ class Trainer():
 						if mem_status.get('warning') and self.cfg.rank == 0:
 							print(colored(f"[Auto-UTD] ⚠️  {mem_status['warning']}", 'yellow'))
 						
-						adjustment = self._auto_utd.maybe_adjust()
-						if adjustment and self.cfg.rank == 0:
-							dry_run_tag = " [DRY-RUN]" if self._auto_utd.dry_run else ""
-							print(colored(
-								f"[Auto-UTD]{dry_run_tag} {adjustment.get('reason', 'adjusted')}: "
-								f"UTD {adjustment.get('old_utd', 0):.4f} → {adjustment.get('new_utd', 0):.4f} "
-								f"(update_frac={adjustment.get('update_fraction', 0):.2f}, "
-								f"mem={adjustment.get('memory_fraction', 0):.1%})",
-								'cyan'
-							))
+						# Check for adjustments (prints handled in auto_utd)
+						self._auto_utd.maybe_adjust()
 						train_metrics.update(self._auto_utd.get_metrics())
 					
 					train_metrics.update(_train_metrics)

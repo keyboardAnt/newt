@@ -135,8 +135,16 @@ python train.py auto_utd=true auto_utd_max=0.2
 |--------|-------------|
 | `auto_utd/utd` | Current UTD value |
 | `auto_utd/update_fraction` | Fraction of time spent in updates |
+| `auto_utd/gpu_utilization` | GPU compute utilization (0-1) |
 | `auto_utd/memory_fraction` | GPU memory usage |
+| `auto_utd/step_time_seconds` | Average step time |
+| `auto_utd/num_adjustments` | Total UTD adjustments made |
 | `auto_utd/memory_warnings` | Count of high-memory events |
+
+**Stdout observability:**
+- Prints active thresholds at startup
+- Periodic heartbeat every 10k steps showing current state
+- Immediate logging on any UTD adjustment
 
 **Configuration:**
 
