@@ -360,6 +360,12 @@ def make_env(cfg):
 	task_cfg = MANISKILL_TASKS[cfg.task]
 	# Only enable rendering when video saving is requested (avoids GPU buffer errors in headless envs)
 	render_mode = 'rgb_array' if cfg.get('save_video', False) else None
+	
+	# Disable SAPIEN GPU renderer when not rendering (prevents Vulkan initialization errors)
+	import os
+	if not render_mode:
+		os.environ['MS_RENDERER_TYPE'] = 'none'
+	
 	env = gym.make(
 		task_cfg['env'],
 		obs_mode='state',
