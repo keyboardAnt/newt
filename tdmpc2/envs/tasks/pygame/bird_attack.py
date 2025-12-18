@@ -321,8 +321,8 @@ class BirdAttackEnv(gym.Env):
                                     self.agent_w, self.agent_h))
 
         # small triangle muzzle on top-center
-        mx = self.agent_x + self.agent_w // 2
-        my = self.agent_y
+        mx = int(self.agent_x + self.agent_w // 2)
+        my = int(self.agent_y)
         pygame.draw.polygon(self._surface, (255,140,0),
                             [(mx-4, my), (mx+4, my), (mx, my-6)])
 
