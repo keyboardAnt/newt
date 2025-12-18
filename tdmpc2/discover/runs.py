@@ -240,12 +240,18 @@ def discover(logs_dir: Optional[Path], wandb_project: Optional[str], limit: Opti
     })
     merged = merged.drop(columns=["_merge"])
     
-    # Consolidate duplicated columns (prefer local)
-    for col in ["task", "exp_name", "status", "updated_at"]:
+    # Consolidate duplicated columns (prefer local, except status prefers wandb)
+    for col in ["task", "exp_name", "updated_at"]:
         local_col, wandb_col = f"{col}_local", f"{col}_wandb"
         if local_col in merged.columns and wandb_col in merged.columns:
             merged[col] = merged[local_col].combine_first(merged[wandb_col])
             merged = merged.drop(columns=[local_col, wandb_col])
+    
+    # For status, prefer wandb (more accurate real-time state) over local
+    # Local run_info.yaml may still say "running" after a crash/kill
+    if "status_local" in merged.columns and "status_wandb" in merged.columns:
+        merged["status"] = merged["status_wandb"].combine_first(merged["status_local"])
+        merged = merged.drop(columns=["status_local", "status_wandb"])
     
     return merged
 
