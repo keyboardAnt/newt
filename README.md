@@ -113,14 +113,14 @@ Training can automatically scale the update-to-data ratio (UTD) based on GPU uti
 **Usage:**
 
 ```bash
-# Dry-run mode (logs what would happen without changing UTD)
-python train.py auto_utd=true auto_utd_dry_run=true
+# Dry-run mode (monitors and logs, but doesn't change UTD)
+python train.py auto_utd=dry_run
 
-# Full auto-scaling (adjusts UTD during training)
-python train.py auto_utd=true
+# Full auto-scaling (actively adjusts UTD during training)
+python train.py auto_utd=on
 
 # With conservative limits
-python train.py auto_utd=true auto_utd_max=0.2
+python train.py auto_utd=on auto_utd_max=0.2
 ```
 
 **How it works:**
@@ -150,8 +150,7 @@ python train.py auto_utd=true auto_utd_max=0.2
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `auto_utd` | `false` | Enable auto-UTD scaling |
-| `auto_utd_dry_run` | `false` | Log adjustments without applying them |
+| `auto_utd` | `off` | Mode: `off`, `dry_run` (monitor only), or `on` (full scaling) |
 | `auto_utd_max` | `0.5` | Maximum UTD value (safety cap) |
 
 ----

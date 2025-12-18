@@ -84,8 +84,7 @@ class AdaptiveUTD:
         smoothing_window: int = 100,
         memory_headroom: float = 0.15,  # Keep 15% memory free
         memory_warning_threshold: float = 0.88,  # Warn at 88%
-        enabled: bool = True,
-        dry_run: bool = False,  # If True, log but don't actually change UTD
+        mode: str = "off",  # "off", "dry_run", or "on"
         work_dir: Optional[Path] = None,
         rank: int = 0,
     ):
@@ -97,8 +96,11 @@ class AdaptiveUTD:
         self.adjustment_interval = adjustment_interval
         self.memory_headroom = memory_headroom
         self.memory_warning_threshold = memory_warning_threshold
-        self.enabled = enabled
-        self.dry_run = dry_run
+        
+        # Parse mode
+        self.mode = mode.lower()
+        self.enabled = self.mode in ("on", "dry_run")
+        self.dry_run = self.mode == "dry_run"
         self.work_dir = Path(work_dir) if work_dir else None
         self.rank = rank
         
@@ -337,8 +339,8 @@ class AdaptiveUTD:
         if self.rank != 0:
             return
         
-        mode = 'DRY-RUN' if self.dry_run else 'ENABLED'
-        print(colored(f'\n[Auto-UTD] Configuration ({mode}):', 'cyan', attrs=['bold']))
+        mode_display = {'on': 'ENABLED', 'dry_run': 'DRY-RUN', 'off': 'OFF'}.get(self.mode, self.mode.upper())
+        print(colored(f'\n[Auto-UTD] Configuration ({mode_display}):', 'cyan', attrs=['bold']))
         print(f'  UTD range:        {self.min_utd:.3f} - {self.max_utd:.3f} (initial: {self.initial_utd:.3f})')
         print(f'  Target update%:   {self.target_fraction:.0%}')
         print(f'  Increase when:    update_frac < {self.target_fraction * 0.7:.0%} (underutilized)')
@@ -353,8 +355,7 @@ class AdaptiveUTD:
         This should be saved with checkpoints.
         """
         return {
-            'auto_utd_enabled': self.enabled,
-            'auto_utd_dry_run': self.dry_run,
+            'auto_utd_mode': self.mode,
             'auto_utd_initial': self.initial_utd,
             'auto_utd_current': self.utd,
             'auto_utd_min': self.min_utd,

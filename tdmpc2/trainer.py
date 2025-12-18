@@ -53,8 +53,7 @@ class Trainer():
 		self._auto_utd = AdaptiveUTD(
 			initial_utd=cfg.utd,
 			max_utd=cfg.get('auto_utd_max', 0.5),
-			enabled=cfg.get('auto_utd', False),
-			dry_run=cfg.get('auto_utd_dry_run', False),
+			mode=cfg.get('auto_utd', 'off'),
 			work_dir=cfg.work_dir,
 			rank=cfg.rank,
 		)
@@ -63,7 +62,7 @@ class Trainer():
 			print('Architecture:', self.agent.model)
 			print(f'Update frequency: {self._update_freq:,}')
 			print(f'Episodes per update frequency: {self._eps_per_update_freq:,}')
-			if cfg.get('auto_utd', False):
+			if self._auto_utd.enabled:
 				self._auto_utd.print_config()
 
 	def common_metrics(self):
