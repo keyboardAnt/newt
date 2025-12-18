@@ -17,7 +17,7 @@ bsub -J "newt-expert[1-70]" \
   -e logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
   -app nvidia-gpu \
-  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0" \
+  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \
   jobs/run_expert_task.sh
 
 echo "Submitting jobs 71-200 to short-gpu (6h walltime)..."
@@ -28,7 +28,7 @@ bsub -J "newt-expert[71-200]" \
   -e logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
   -app nvidia-gpu \
-  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.0" \
+  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \
   jobs/run_expert_task.sh
 
 echo "Done. Monitor with: bjobs -J 'newt-expert*'"
