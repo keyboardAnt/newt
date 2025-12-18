@@ -36,6 +36,9 @@ class Config:
 	steps: int = 100_000_000
 	batch_size: int = 1024
 	utd: float = 0.075
+	auto_utd: bool = False  # Automatically scale UTD based on GPU utilization
+	auto_utd_dry_run: bool = False  # If True, log what would happen without changing UTD
+	auto_utd_max: float = 0.5  # Maximum UTD value (for safety)
 	reward_coef: float = 0.1
 	value_coef: float = 0.1
 	consistency_coef: float = 20.0

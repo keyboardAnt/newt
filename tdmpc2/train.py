@@ -72,6 +72,11 @@ def write_run_info(cfg, work_dir: Path):
 		'steps': cfg.steps,
 		'model_size': cfg.model_size,
 		'checkpoint': cfg.checkpoint,
+		# UTD config for reproducibility
+		'utd': cfg.utd,
+		'auto_utd': cfg.get('auto_utd', False),
+		'auto_utd_dry_run': cfg.get('auto_utd_dry_run', False),
+		'auto_utd_max': cfg.get('auto_utd_max', 0.5),
 	}
 	work_dir = Path(work_dir)
 	work_dir.mkdir(parents=True, exist_ok=True)

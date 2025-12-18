@@ -57,6 +57,8 @@ $ python train.py obs=rgb    # <-- a 20M parameter agent trained with state+RGB 
 
 We recommend using default hyperparameters, including the default model size of 20M parameters (`model_size=L`). See `config.py` for a full list of arguments.
 
+**Performance:** Training uses `torch.compile` by default (`compile=True`) for ~2x faster updates via CUDA graphs. Disable with `compile=False` if you encounter compatibility issues.
+
 ----
 
 ## Resumable Training
@@ -101,6 +103,48 @@ make test-sanity              # Verify imports (run inside container)
 - Jobs 71-200 → `short-gpu` (130 jobs, 6h walltime with auto-resume)
 
 Jobs that get preempted are automatically requeued and resume from their last checkpoint.
+
+----
+
+## Auto-UTD: GPU Utilization Optimization
+
+Training can automatically scale the update-to-data ratio (UTD) based on GPU utilization. When the GPU is underutilized (common in RL due to CPU-bound environment stepping), auto-UTD increases the number of gradient updates per environment step to maximize GPU usage.
+
+**Usage:**
+
+```bash
+# Dry-run mode (logs what would happen without changing UTD)
+python train.py auto_utd=true auto_utd_dry_run=true
+
+# Full auto-scaling (adjusts UTD during training)
+python train.py auto_utd=true
+
+# With conservative limits
+python train.py auto_utd=true auto_utd_max=0.2
+```
+
+**How it works:**
+- Monitors the ratio of time spent in model updates vs. total step time
+- If GPU is underutilized (<42% of time in updates) and memory is available (<85%), increases UTD
+- If memory pressure detected (>90%), decreases UTD to avoid OOM
+- Logs all adjustments to `<run_dir>/auto_utd_log.json` for reproducibility
+
+**W&B metrics:**
+
+| Metric | Description |
+|--------|-------------|
+| `auto_utd/utd` | Current UTD value |
+| `auto_utd/update_fraction` | Fraction of time spent in updates |
+| `auto_utd/memory_fraction` | GPU memory usage |
+| `auto_utd/memory_warnings` | Count of high-memory events |
+
+**Configuration:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `auto_utd` | `false` | Enable auto-UTD scaling |
+| `auto_utd_dry_run` | `false` | Log adjustments without applying them |
+| `auto_utd_max` | `0.5` | Maximum UTD value (safety cap) |
 
 ----
 
