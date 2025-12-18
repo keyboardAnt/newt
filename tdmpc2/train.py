@@ -264,12 +264,15 @@ def launch(cfg: Config):
 		print(colored('Per-GPU batch size:', 'yellow', attrs=['bold']), cfg.batch_size)
 
 	# Create buffer
+	# Note: Buffer sampler compilation is disabled because episode count grows
+	# dynamically, causing shape changes that trigger recompilation conflicts
+	# with TDMPC2's compiled methods. TDMPC2 methods are still compiled.
 	buffer_args = {
 		'capacity': cfg.buffer_size,
 		'batch_size': cfg.batch_size,
 		'horizon': cfg.horizon,
 		'multiproc': cfg.multiproc,
-		'compile': cfg.compile,
+		'compile': False,  # Disabled - dynamic shapes cause recompilation issues
 	}
 	if cfg.use_demos and cfg.no_demo_buffer:
 		buffer = Buffer(**buffer_args)
