@@ -23,5 +23,4 @@ python train.py \
   use_demos=False \
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
   exp_name=expert_run \
-  save_video=False \
-  compile=False
+  save_video=False

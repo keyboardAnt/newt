@@ -14,6 +14,7 @@ dependencies:
     - gymnasium[atari,accept-rom-license]
     - gymnasium[box2d]
     - gpustat==1.1.1
+    # pynvml already installed via mani-skill-nightly (v13.0.1)
     - ffmpeg==1.4
     - imageio==2.37.0
     - imageio-ffmpeg==0.6.0

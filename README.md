@@ -57,6 +57,8 @@ $ python train.py obs=rgb    # <-- a 20M parameter agent trained with state+RGB 
 
 We recommend using default hyperparameters, including the default model size of 20M parameters (`model_size=L`). See `config.py` for a full list of arguments.
 
+**Performance:** Training uses `torch.compile` by default (`compile=True`) for ~2x faster updates via CUDA graphs. Disable with `compile=False` if you encounter compatibility issues.
+
 ----
 
 ## Resumable Training
@@ -89,10 +91,11 @@ The `final_step` field shows how far training progressed, useful for debugging p
 **LSF cluster usage:**
 
 ```bash
-make interactive      # Launch interactive GPU session
-make submit-expert    # Submit all 200 expert training jobs
-make submit-eval      # Submit eval jobs to generate videos
-make test-sanity      # Verify imports (run inside container)
+make interactive              # Launch interactive GPU session (exclusive mode)
+make interactive-nonexclusive # Launch interactive GPU session (shared mode, for ManiSkill)
+make submit-expert            # Submit all 200 expert training jobs
+make submit-eval              # Submit eval jobs to generate videos
+make test-sanity              # Verify imports (run inside container)
 ```
 
 `submit-expert` splits jobs across queues (long-gpu first for fewer interruptions):
@@ -100,6 +103,55 @@ make test-sanity      # Verify imports (run inside container)
 - Jobs 71-200 → `short-gpu` (130 jobs, 6h walltime with auto-resume)
 
 Jobs that get preempted are automatically requeued and resume from their last checkpoint.
+
+----
+
+## Auto-UTD: GPU Utilization Optimization
+
+Training can automatically scale the update-to-data ratio (UTD) based on GPU utilization. When the GPU is underutilized (common in RL due to CPU-bound environment stepping), auto-UTD increases the number of gradient updates per environment step to maximize GPU usage.
+
+**Usage:**
+
+```bash
+# Dry-run mode (monitors and logs, but doesn't change UTD)
+python train.py auto_utd=dry_run
+
+# Full auto-scaling (actively adjusts UTD during training)
+python train.py auto_utd=on
+
+# With conservative limits
+python train.py auto_utd=on auto_utd_max=0.2
+```
+
+**How it works:**
+- Monitors the ratio of time spent in model updates vs. total step time
+- If GPU is underutilized (<42% of time in updates) and memory is available (<85%), increases UTD
+- If memory pressure detected (>90%), decreases UTD to avoid OOM
+- Logs all adjustments to `<run_dir>/auto_utd_log.json` for reproducibility
+
+**W&B metrics:**
+
+| Metric | Description |
+|--------|-------------|
+| `auto_utd/utd` | Current UTD value |
+| `auto_utd/update_fraction` | Fraction of time spent in updates |
+| `auto_utd/gpu_utilization` | GPU compute utilization (0-1) |
+| `auto_utd/memory_fraction` | GPU memory usage |
+| `auto_utd/step_time_seconds` | Average step time |
+| `auto_utd/num_adjustments` | Total UTD adjustments made |
+| `auto_utd/memory_warnings` | Count of high-memory events |
+
+**Stdout observability:**
+- Prints active thresholds at startup
+- Periodic heartbeat every 10k steps showing current state
+- Immediate logging on any UTD adjustment
+
+**Configuration:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `auto_utd` | `off` | Mode: `off`, `dry_run` (monitor only), or `on` (full scaling) |
+| `auto_utd_max` | `0.5` | Maximum UTD value (safety cap) |
 
 ----
 
@@ -157,7 +209,8 @@ Run `make help` to see all available targets:
 | `make list-crashed` | Crashed runs |
 | `make list-local-only` | Runs not synced to wandb |
 | `make list-wandb-only` | Runs only on wandb |
-| `make interactive` | Launch interactive GPU session |
+| `make interactive` | Launch interactive GPU session (exclusive mode) |
+| `make interactive-nonexclusive` | Launch interactive GPU session (shared mode, for ManiSkill) |
 | `make submit-expert` | Submit expert training jobs |
 | `make gen-eval` | Generate eval task list (for tasks missing videos) |
 | `make submit-eval` | Submit eval jobs (rarely needed - videos generated during training) |

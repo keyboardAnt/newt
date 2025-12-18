@@ -12,6 +12,7 @@ from tensordict.tensordict import TensorDict
 from discover import parse_step
 
 from common import barrier
+from common.auto_utd import AdaptiveUTD
 
 
 def split_by_rank(global_list, rank, world_size):
@@ -47,10 +48,22 @@ class Trainer():
 		self._update_freq = self.cfg.num_envs * self.cfg.episode_length * self.cfg.world_size
 		self._update_tokens = 0
 		self._eps_per_update_freq = int((cfg.episode_length / np.array(cfg.episode_lengths)).sum())
+		
+		# Adaptive UTD scaling
+		self._auto_utd = AdaptiveUTD(
+			initial_utd=cfg.utd,
+			max_utd=cfg.get('auto_utd_max', 0.5),
+			mode=cfg.get('auto_utd', 'off'),
+			work_dir=cfg.work_dir,
+			rank=cfg.rank,
+		)
+		
 		if cfg.rank == 0:
 			print('Architecture:', self.agent.model)
 			print(f'Update frequency: {self._update_freq:,}')
 			print(f'Episodes per update frequency: {self._eps_per_update_freq:,}')
+			if self._auto_utd.enabled:
+				self._auto_utd.print_config()
 
 	def common_metrics(self):
 		"""Return a dictionary of current metrics."""
@@ -73,10 +86,15 @@ class Trainer():
 		# Save trainer state (only on rank 0 where model_dir exists)
 		if hasattr(self.logger, '_model_dir') and self.logger._model_dir:
 			state_path = Path(self.logger._model_dir) / f'{identifier}_trainer.pt'
-			torch.save({
+			checkpoint_data = {
 				'step': self._step,
 				'ep_idx': self._ep_idx,
-			}, state_path)
+			}
+			# Include auto-UTD config for reproducibility
+			if self._auto_utd.enabled:
+				checkpoint_data['auto_utd'] = self._auto_utd.get_effective_config()
+				self._auto_utd.save_log()  # Also save detailed log
+			torch.save(checkpoint_data, state_path)
 			if self.cfg.rank == 0:
 				print(colored(f'Saved checkpoint at step {self._step}.', 'green', attrs=['bold']))
 
@@ -351,12 +369,42 @@ class Trainer():
 			
 			# Update agent
 			if self._step >= self.cfg.seeding_coef * self._update_freq:
-				self._update_tokens += self.cfg.num_envs * self.cfg.world_size * self.cfg.utd
+				# Use adaptive UTD if enabled, otherwise use config value
+				current_utd = self._auto_utd.utd if self._auto_utd.enabled else self.cfg.utd
+				self._update_tokens += self.cfg.num_envs * self.cfg.world_size * current_utd
+				
 				if self._update_tokens >= 1.0:
 					num_updates = int(self._update_tokens)
+					update_start = time()
 					for _ in range(num_updates):
 						_train_metrics = self.agent.update(self.buffer)
+					update_duration = time() - update_start
+					
+					# Track timing for adaptive UTD
+					if self._auto_utd.enabled:
+						self._auto_utd.set_step(self._step)
+						self._auto_utd.record_update_time(update_duration)
+						
+						# Check memory safety (early OOM warning)
+						mem_status = self._auto_utd.check_memory_safety()
+						if mem_status.get('warning') and self.cfg.rank == 0:
+							print(colored(f"[Auto-UTD] ⚠️  {mem_status['warning']}", 'yellow'))
+						
+						# Check for adjustments (prints handled in auto_utd)
+						self._auto_utd.maybe_adjust()
+						train_metrics.update(self._auto_utd.get_metrics())
+					
 					train_metrics.update(_train_metrics)
 					self._update_tokens -= num_updates
+				
+				# Track step timing for adaptive UTD
+				if self._auto_utd.enabled:
+					self._auto_utd.start_step()
+		
+		# Save auto-UTD log and print summary
+		if self._auto_utd.enabled:
+			self._auto_utd.save_log()
+			if self.cfg.rank == 0:
+				print(colored(self._auto_utd.get_summary(), 'cyan'))
 		
 		self.logger.finish()

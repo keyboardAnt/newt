@@ -72,6 +72,11 @@ def write_run_info(cfg, work_dir: Path):
 		'steps': cfg.steps,
 		'model_size': cfg.model_size,
 		'checkpoint': cfg.checkpoint,
+		# UTD config for reproducibility
+		'utd': cfg.utd,
+		'auto_utd': cfg.get('auto_utd', False),
+		'auto_utd_dry_run': cfg.get('auto_utd_dry_run', False),
+		'auto_utd_max': cfg.get('auto_utd_max', 0.5),
 	}
 	work_dir = Path(work_dir)
 	work_dir.mkdir(parents=True, exist_ok=True)
@@ -264,12 +269,15 @@ def launch(cfg: Config):
 		print(colored('Per-GPU batch size:', 'yellow', attrs=['bold']), cfg.batch_size)
 
 	# Create buffer
+	# Note: Buffer sampler compilation is disabled because episode count grows
+	# dynamically, causing shape changes that trigger recompilation conflicts
+	# with TDMPC2's compiled methods. TDMPC2 methods are still compiled.
 	buffer_args = {
 		'capacity': cfg.buffer_size,
 		'batch_size': cfg.batch_size,
 		'horizon': cfg.horizon,
 		'multiproc': cfg.multiproc,
-		'compile': cfg.compile,
+		'compile': False,  # Disabled - dynamic shapes cause recompilation issues
 	}
 	if cfg.use_demos and cfg.no_demo_buffer:
 		buffer = Buffer(**buffer_args)

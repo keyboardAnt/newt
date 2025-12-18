@@ -25,7 +25,7 @@ class Config:
 	episodic: bool = False
 	num_envs: int = 10
 	env_mode: str = "async"
-	tasks_fp: str = "<path>/<to>/tasks.json"
+	tasks_fp: str = "../tasks.json"  # Relative to tdmpc2/ directory
 
 	# evaluation
 	checkpoint: Optional[str] = None
@@ -36,6 +36,8 @@ class Config:
 	steps: int = 100_000_000
 	batch_size: int = 1024
 	utd: float = 0.075
+	auto_utd: str = "off"  # "off", "dry_run" (monitor only), or "on" (full auto-scaling)
+	auto_utd_max: float = 0.5  # Maximum UTD value (for safety)
 	reward_coef: float = 0.1
 	value_coef: float = 0.1
 	consistency_coef: float = 20.0

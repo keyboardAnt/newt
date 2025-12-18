@@ -24,6 +24,9 @@ pip install -q "wandb[media]"
 TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 
+# NOTE: ManiSkill tasks (87-122) require non-exclusive GPU mode.
+# Submit them separately: bsub -gpu "num=1" ... for indices 87-122
+
 # Find the latest checkpoint for this task; skip if none exists.
 # Pass task via environment variable since heredoc is single-quoted
 export TASK
@@ -75,5 +78,5 @@ python train.py \
   exp_name="eval_${RUN_ID}" \
   save_video=True \
   env_mode=sync \
-  compile=False
+  compile=False  # Keep disabled for eval (compilation overhead > 1-step runtime)
 

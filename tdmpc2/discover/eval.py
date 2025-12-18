@@ -177,6 +177,9 @@ pip install -q "wandb[media]"
 TASK=$(sed -n "${{LSB_JOBINDEX}}p" jobs/tasks_need_eval.txt)
 echo "LSF job index: ${{LSB_JOBINDEX}}, task: ${{TASK}}"
 
+# NOTE: ManiSkill tasks require non-exclusive GPU mode for SAPIEN/Vulkan.
+# If this fails for ms-* tasks, resubmit with: -gpu "num=1" instead of exclusive_process
+
 export TASK
 eval $(python - <<'PY'
 import os, yaml
@@ -226,7 +229,7 @@ python train.py \\
   exp_name="eval_${{RUN_ID}}" \\
   save_video=True \\
   env_mode=sync \\
-  compile=False
+  compile=False  # Keep disabled for eval (compilation overhead > 1-step runtime)
 '''
     
     lsf_path = output_dir / 'run_eval_need_videos.lsf'
