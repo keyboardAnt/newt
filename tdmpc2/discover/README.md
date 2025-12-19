@@ -126,6 +126,21 @@ python discover/collect_videos.py --copy --output ./my_videos
 rsync -avz <server>:discover/videos_for_presentation/ ./presentation_videos/
 ```
 
+### Prune Old Videos
+
+When collecting videos multiple times during training, older checkpoint videos accumulate.
+Use `make prune-videos` to keep only the latest video per task:
+
+```bash
+# Preview what would be removed
+make prune-videos-dry
+
+# Actually remove old videos
+make prune-videos
+```
+
+Note: `collect_videos()` now automatically prunes old videos by default (`prune_old=True`).
+
 ## API Reference
 
 ### Cache (`discover.cache`)
@@ -173,6 +188,7 @@ df, timestamp, used_cache = cache.load(refresh=False)
 | `download_wandb_videos(df, output_dir, ...)` | Download videos directly from Wandb |
 | `tasks_ready_for_eval(df, logs_dir, ...)` | Find tasks ≥50% trained, check video status |
 | `generate_eval_script(tasks, output_dir, project_root)` | Generate LSF script for tasks missing videos |
+| `prune_old_videos(output_dir, dry_run=False)` | Remove old checkpoint videos (keep only latest per task) |
 
 ## Interactive Notebook
 

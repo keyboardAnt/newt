@@ -242,6 +242,72 @@ python train.py \\
     return task_list_path, lsf_path
 
 
+def prune_old_videos(output_dir: Path, dry_run: bool = False) -> List[Path]:
+    """Remove older checkpoint videos when a newer one exists for the same task.
+    
+    Args:
+        output_dir: Directory containing collected videos
+        dry_run: If True, only report what would be removed without deleting
+    
+    Returns:
+        List of paths that were (or would be) removed
+    """
+    import re
+    
+    output_dir = Path(output_dir)
+    if not output_dir.is_dir():
+        return []
+    
+    # Pattern to match task_step.mp4 filenames
+    pattern = re.compile(r'^(.+)_(\d+)\.mp4$')
+    
+    # Group videos by task
+    task_videos: dict[str, List[Tuple[int, Path]]] = {}
+    for video_path in output_dir.glob('*.mp4'):
+        match = pattern.match(video_path.name)
+        if match:
+            task = match.group(1)
+            step = int(match.group(2))
+            task_videos.setdefault(task, []).append((step, video_path))
+    
+    # Find and remove old videos (keep only the highest step)
+    removed = []
+    for task, videos in task_videos.items():
+        if len(videos) <= 1:
+            continue
+        videos.sort(key=lambda x: x[0], reverse=True)  # Sort by step, highest first
+        max_step = videos[0][0]
+        for step, path in videos[1:]:  # Skip the newest
+            if dry_run:
+                print(f"  [dry-run] Would remove: {path.name} (step {step:,} < {max_step:,})")
+            else:
+                path.unlink(missing_ok=True)
+            removed.append(path)
+    
+    return removed
+
+
+def _prune_task_videos(output_dir: Path, task: str, keep_step: int) -> List[Path]:
+    """Remove videos for a specific task with steps lower than keep_step.
+    
+    Internal helper for collect_videos to prune old videos for a single task.
+    """
+    import re
+    
+    pattern = re.compile(rf'^{re.escape(task)}_(\d+)\.mp4$')
+    removed = []
+    
+    for video_path in output_dir.glob(f'{task}_*.mp4'):
+        match = pattern.match(video_path.name)
+        if match:
+            step = int(match.group(1))
+            if step < keep_step:
+                video_path.unlink(missing_ok=True)
+                removed.append(video_path)
+    
+    return removed
+
+
 def collect_videos(
     df: "pd.DataFrame",
     logs_dir: Path,
@@ -249,8 +315,19 @@ def collect_videos(
     target_step: int = 5_000_000,
     min_progress: float = 0.5,
     create_symlinks: bool = True,
+    prune_old: bool = True,
 ) -> Optional["pd.DataFrame"]:
-    """Collect videos from tasks that are min_progress% trained into a single directory."""
+    """Collect videos from tasks that are min_progress% trained into a single directory.
+    
+    Args:
+        df: DataFrame with run data
+        logs_dir: Directory containing run logs
+        output_dir: Output directory for collected videos
+        target_step: Target training steps (default 5M)
+        min_progress: Minimum progress threshold (default 0.5 = 50%)
+        create_symlinks: If True, create symlinks; if False, copy files
+        prune_old: If True, remove older checkpoint videos for same task (default True)
+    """
     pd = require_pandas()
     
     min_step = int(target_step * min_progress)
@@ -278,14 +355,22 @@ def collect_videos(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     collected = []
+    pruned_total = []
     for v in sorted(video_info, key=lambda x: x['task']):
         src = Path(v['video_path'])
         if not src.exists():
             print(f"⚠️  Video not found: {src}")
             continue
         
-        dst_name = f"{v['task']}_{int(v['max_step'])}.mp4"
+        task = v['task']
+        step = int(v['max_step'])
+        dst_name = f"{task}_{step}.mp4"
         dst = output_dir / dst_name
+        
+        # Prune older videos for this task before creating the new one
+        if prune_old:
+            pruned = _prune_task_videos(output_dir, task, step)
+            pruned_total.extend(pruned)
         
         if create_symlinks:
             if dst.exists() or dst.is_symlink():
@@ -295,8 +380,8 @@ def collect_videos(
             shutil.copy2(src, dst)
         
         collected.append({
-            'task': v['task'],
-            'step': int(v['max_step']),
+            'task': task,
+            'step': step,
             'progress': v['progress_pct'],
             'filename': dst_name,
             'source_path': str(src),
@@ -309,6 +394,8 @@ def collect_videos(
     print(f"\n📁 Output directory: {output_dir}")
     print(f"   Total videos: {len(collected)}")
     print(f"   Method: {'symlinks' if create_symlinks else 'copies'}")
+    if pruned_total:
+        print(f"   🗑️  Pruned old videos: {len(pruned_total)}")
     
     print(f"\n{'─' * 80}")
     print(f"{'Task':<45} {'Step':>12} {'Progress':>10}")
@@ -508,6 +595,48 @@ def main():
     
     print(f"\n📋 To submit the eval jobs:")
     print(f"   make submit-eval")
+
+
+def prune_main():
+    """CLI to prune old checkpoint videos, keeping only the latest for each task."""
+    import argparse
+    
+    ROOT = Path(__file__).parents[1]  # tdmpc2/
+    default_dir = ROOT / 'discover' / 'videos_for_presentation'
+    
+    parser = argparse.ArgumentParser(
+        description="Prune old checkpoint videos, keeping only the latest for each task."
+    )
+    parser.add_argument(
+        "--dir",
+        type=Path,
+        default=default_dir,
+        help=f"Directory containing videos (default: {default_dir})"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be removed without deleting"
+    )
+    args = parser.parse_args()
+    
+    print("=" * 60)
+    print(f"{'PRUNE OLD CHECKPOINT VIDEOS':^60}")
+    print("=" * 60)
+    print(f"\n📁 Directory: {args.dir}")
+    print(f"   Mode: {'dry-run (no files deleted)' if args.dry_run else 'delete old videos'}")
+    print()
+    
+    removed = prune_old_videos(args.dir, dry_run=args.dry_run)
+    
+    if not removed:
+        print("✅ No old videos to prune - directory is clean.")
+    else:
+        action = "Would remove" if args.dry_run else "Removed"
+        print(f"\n🗑️  {action} {len(removed)} old video(s)")
+        if args.dry_run:
+            print("\n   Run without --dry-run to actually delete.")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

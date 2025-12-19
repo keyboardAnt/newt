@@ -16,7 +16,7 @@ from .plots import (
     running_runs_summary, tasks_needing_restart, duplicate_running_runs, duplicate_run_details,
     currently_running_tasks,
 )
-from .eval import tasks_ready_for_eval, generate_eval_script, collect_videos, download_wandb_videos
+from .eval import tasks_ready_for_eval, generate_eval_script, collect_videos, download_wandb_videos, prune_old_videos
 
 __all__ = [
     # runs
@@ -45,4 +45,5 @@ __all__ = [
     'generate_eval_script',
     'collect_videos',
     'download_wandb_videos',
+    'prune_old_videos',
 ]

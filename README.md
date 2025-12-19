@@ -214,6 +214,8 @@ Run `make help` to see all available targets:
 | `make submit-expert` | Submit expert training jobs |
 | `make gen-eval` | Generate eval task list (for tasks missing videos) |
 | `make submit-eval` | Submit eval jobs (rarely needed - videos generated during training) |
+| `make prune-videos` | Remove old checkpoint videos (keep only latest per task) |
+| `make prune-videos-dry` | Preview what prune-videos would remove |
 
 ----
 

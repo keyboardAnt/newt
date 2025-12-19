@@ -4,7 +4,8 @@ DISCOVER := $(ROOT)/tdmpc2/discover/runs.py
 STATUS := $(ROOT)/tdmpc2/discover/status.py
 
 .PHONY: help interactive interactive-nonexclusive submit-expert gen-eval submit-eval test-sanity \
-        status status-debug discover list-completed list-running list-crashed list-local-only list-wandb-only
+        status status-debug discover list-completed list-running list-crashed list-local-only list-wandb-only \
+        prune-videos prune-videos-dry
 
 help:
 	@echo "Targets:"
@@ -23,6 +24,8 @@ help:
 	@echo "  submit-expert            Submit expert training jobs"
 	@echo "  gen-eval                 Generate eval task list (tasks needing videos)"
 	@echo "  submit-eval              Submit eval jobs for tasks in task list"
+	@echo "  prune-videos             Remove old checkpoint videos (keep only latest per task)"
+	@echo "  prune-videos-dry         Preview what prune-videos would remove"
 
 interactive:
 	@cd $(ROOT)/tdmpc2 && ./jobs/interactive.sh
@@ -38,6 +41,12 @@ gen-eval:
 
 submit-eval:
 	@cd $(ROOT)/tdmpc2 && bsub < jobs/run_eval_need_videos.lsf
+
+prune-videos:
+	@cd $(ROOT)/tdmpc2 && $(PYTHON) -c "import sys; sys.argv=['prune']; from discover.eval import prune_main; prune_main()"
+
+prune-videos-dry:
+	@cd $(ROOT)/tdmpc2 && $(PYTHON) -c "import sys; sys.argv=['prune', '--dry-run']; from discover.eval import prune_main; prune_main()"
 
 test-sanity:
 	@cd $(ROOT)/tdmpc2 && ./tests/test_imports.sh
