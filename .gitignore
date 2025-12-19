@@ -2,6 +2,7 @@
 outputs/
 logs/
 .vscode/
+.nfs*  # NFS stale file handles
 
 # HF checkpoints
 tdmpc2/hf_checkpoints/*

@@ -65,10 +65,25 @@ def plot_max_steps(df: "pd.DataFrame", target_step: Optional[int] = None) -> Non
 
 
 def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
-    """Generate overview statistics and visualizations for training progress."""
+    """Generate overview statistics and visualizations for training progress.
+    
+    Shows 4 categories:
+    - Completed: reached target_step
+    - Running: incomplete but has active runs in wandb
+    - Stalled: incomplete, has progress, but no active runs (needs restart)
+    - Not Started: 0 steps
+    """
     pd = require_pandas()
     import matplotlib.pyplot as plt
+    from .analysis import attach_max_step
     
+    if df.empty:
+        print('No runs found.')
+        return
+    
+    df_with_step = attach_max_step(df)
+    
+    # Get best step per task
     best = best_step_by_task(df)
     if best.empty:
         print('No runs found.')
@@ -76,10 +91,32 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     
     steps = best['max_step'].fillna(0)
     n_tasks = len(steps)
+    tasks = best['task'].tolist()
     
-    completed = (steps >= target_step).sum()
-    in_progress = ((steps > 0) & (steps < target_step)).sum()
-    not_started = (steps == 0).sum()
+    # Determine which tasks have active runs (wandb-verified)
+    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(True, index=df_with_step.index)
+    running_mask = (df_with_step['status'] == 'running') & has_wandb
+    tasks_with_running = set(df_with_step[running_mask]['task'].unique())
+    
+    # Categorize tasks
+    completed_mask = steps >= target_step
+    not_started_mask = steps == 0
+    in_progress_mask = (steps > 0) & (steps < target_step)
+    
+    # Split in_progress into running vs stalled
+    running_tasks = []
+    stalled_tasks = []
+    for task, is_in_progress in zip(tasks, in_progress_mask):
+        if is_in_progress:
+            if task in tasks_with_running:
+                running_tasks.append(task)
+            else:
+                stalled_tasks.append(task)
+    
+    completed = completed_mask.sum()
+    running = len(running_tasks)
+    stalled = len(stalled_tasks)
+    not_started = not_started_mask.sum()
     
     pct_complete = 100 * completed / n_tasks
     avg_progress = 100 * steps.mean() / target_step
@@ -87,14 +124,19 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     
-    # Pie chart
+    # Pie chart with 4 categories
     ax1 = axes[0]
-    sizes = [completed, in_progress, not_started]
-    labels = [f'Completed\n({completed})', f'In Progress\n({in_progress})', f'Not Started\n({not_started})']
-    colors = ['#2ecc71', '#f39c12', '#e74c3c']
-    explode = (0.05, 0, 0)
-    ax1.pie(sizes, labels=labels, colors=colors, explode=explode,
-            autopct='%1.1f%%', startangle=90, textprops={'fontsize': 10})
+    sizes = [completed, running, stalled, not_started]
+    labels = [f'Completed\n({completed})', f'Running\n({running})', f'Stalled\n({stalled})', f'Not Started\n({not_started})']
+    colors = ['#2ecc71', '#3498db', '#f39c12', '#e74c3c']  # green, blue, orange, red
+    explode = (0.05, 0, 0, 0)
+    
+    # Filter out zero-sized wedges for cleaner display
+    non_zero = [(s, l, c, e) for s, l, c, e in zip(sizes, labels, colors, explode) if s > 0]
+    if non_zero:
+        sizes_nz, labels_nz, colors_nz, explode_nz = zip(*non_zero)
+        ax1.pie(sizes_nz, labels=labels_nz, colors=colors_nz, explode=explode_nz,
+                autopct='%1.1f%%', startangle=90, textprops={'fontsize': 10})
     ax1.set_title('Task Status Breakdown')
     
     # Cumulative progress
@@ -119,9 +161,10 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     print(f"  Total tasks:         {n_tasks:>6}")
     print(f"  Target step:         {target_step:>6,}")
     print("-" * 60)
-    print(f"  ✅ Completed:        {completed:>6} ({pct_complete:.1f}%)")
-    print(f"  🔄 In Progress:      {in_progress:>6} ({100*in_progress/n_tasks:.1f}%)")
-    print(f"  ❌ Not Started:      {not_started:>6} ({100*not_started/n_tasks:.1f}%)")
+    print(f"  🟢 ✅ Completed:      {completed:>6} ({pct_complete:.1f}%)")
+    print(f"  🔵 🏃 Running:        {running:>6} ({100*running/n_tasks:.1f}%)  <- active in wandb")
+    print(f"  🟠 ⏸️  Stalled:        {stalled:>6} ({100*stalled/n_tasks:.1f}%)  <- needs restart")
+    print(f"  🔴 ❌ Not Started:    {not_started:>6} ({100*not_started/n_tasks:.1f}%)")
     print("-" * 60)
     print(f"  Average progress:    {avg_progress:>6.1f}%")
     print(f"  Median progress:     {median_progress:>6.1f}%")
@@ -246,3 +289,291 @@ def progress_by_domain(df: "pd.DataFrame", target_step: int = 5_000_000) -> None
         print(f"{idx:<20} {int(row['n_tasks']):>8} {int(row['n_complete']):>10} "
               f"{row['avg_progress']:>13.1f}% {row['completion_rate']:>13.1f}%")
     print("-" * 80)
+
+
+def running_runs_summary(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
+    """Show summary of currently running runs by task.
+    
+    Only counts runs as "running" if confirmed by wandb (found_in == 'wandb' or 'both').
+    Local-only runs with status='running' are unreliable (stale after crashes).
+    
+    Returns a DataFrame with columns: task, running_runs, max_step, progress_pct, needs_attention
+    where needs_attention indicates tasks that are incomplete but have no running runs.
+    """
+    pd = require_pandas()
+    from .analysis import attach_max_step
+    
+    if df.empty:
+        print('No runs found.')
+        return pd.DataFrame()
+    
+    df_with_step = attach_max_step(df)
+    
+    # Only trust "running" status from wandb (not local-only runs with stale status)
+    # found_in can be: 'local', 'wandb', or 'both'
+    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else True
+    running_mask = (df_with_step['status'] == 'running') & has_wandb
+    
+    # Also count local-only "running" for diagnostics (these are likely stale)
+    local_only_running_mask = (df_with_step['status'] == 'running') & (df_with_step['found_in'] == 'local') if 'found_in' in df_with_step.columns else pd.Series(False, index=df_with_step.index)
+    
+    # Count confirmed running runs per task (wandb-verified)
+    running_counts = df_with_step[running_mask].groupby('task').size().rename('running_runs')
+    
+    # Count stale local-only "running" for warning
+    stale_local_counts = df_with_step[local_only_running_mask].groupby('task').size().rename('stale_local_running')
+    
+    # Get best step per task
+    best_step = df_with_step.groupby('task')['max_step'].max().fillna(0)
+    
+    # Combine into summary
+    summary = pd.DataFrame({
+        'running_runs': running_counts,
+        'stale_local_running': stale_local_counts,
+        'max_step': best_step,
+    }).fillna({'running_runs': 0, 'stale_local_running': 0})
+    summary['running_runs'] = summary['running_runs'].astype(int)
+    summary['stale_local_running'] = summary['stale_local_running'].astype(int)
+    summary['progress_pct'] = (100 * summary['max_step'] / target_step).clip(upper=100).round(1)
+    summary['is_complete'] = summary['max_step'] >= target_step
+    summary['needs_restart'] = (~summary['is_complete']) & (summary['running_runs'] == 0)
+    summary['has_duplicates'] = summary['running_runs'] > 1
+    
+    summary = summary.reset_index().sort_values(['needs_restart', 'progress_pct'], ascending=[False, True])
+    
+    # Print summary
+    total_running = summary['running_runs'].sum()
+    total_stale = summary['stale_local_running'].sum()
+    tasks_with_running = (summary['running_runs'] > 0).sum()
+    tasks_needing_restart = summary['needs_restart'].sum()
+    tasks_with_duplicates = summary['has_duplicates'].sum()
+    
+    print("=" * 70)
+    print(f"{'RUNNING RUNS SUMMARY':^70}")
+    print("=" * 70)
+    print(f"  Running runs (wandb):      {total_running:>6}  ✓ confirmed by wandb")
+    if total_stale > 0:
+        print(f"  Stale local 'running':     {total_stale:>6}  ⚠️  (local-only, likely crashed)")
+    print(f"  Tasks with running runs:   {tasks_with_running:>6}")
+    print(f"  Tasks needing restart:     {tasks_needing_restart:>6}  ⚠️  (incomplete, no active run)")
+    print(f"  Tasks with duplicate runs: {tasks_with_duplicates:>6}  🔄 (>1 run for same task)")
+    print("=" * 70)
+    
+    return summary
+
+
+def tasks_needing_restart(df: "pd.DataFrame", target_step: int = 5_000_000, show_top_n: int = None) -> "pd.DataFrame":
+    """Show tasks that are incomplete but have no running runs - these need to be restarted.
+    
+    Uses wandb-verified running status. Tasks shown here have no active runs in wandb.
+    
+    Returns DataFrame of tasks needing restart, sorted by progress (highest first, to prioritize
+    tasks that are closest to completion).
+    """
+    pd = require_pandas()
+    
+    summary = running_runs_summary(df, target_step=target_step)
+    if summary.empty:
+        return summary
+    
+    # Filter to tasks needing restart
+    needing = summary[summary['needs_restart']].copy()
+    needing = needing.sort_values('progress_pct', ascending=False)
+    
+    if needing.empty:
+        print("\n✅ All incomplete tasks have active running runs (per wandb)!")
+        return needing
+    
+    print(f"\n⚠️  TASKS NEEDING RESTART ({len(needing)} tasks, no active runs in wandb):")
+    print("-" * 70)
+    print(f"{'Task':<40} {'Progress':>12} {'Max Step':>15}")
+    print("-" * 70)
+    
+    display_df = needing.head(show_top_n) if show_top_n else needing
+    for _, row in display_df.iterrows():
+        step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
+        print(f"   {row['task']:<37} {row['progress_pct']:>10.1f}% {step_str:>15}")
+    
+    if show_top_n and len(needing) > show_top_n:
+        print(f"   ... and {len(needing) - show_top_n} more tasks")
+    
+    print("-" * 70)
+    
+    return needing
+
+
+def duplicate_running_runs(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Show tasks that have multiple runs currently running (potential waste of resources).
+    
+    Only counts wandb-verified running runs (not stale local-only status).
+    
+    Returns DataFrame of tasks with >1 running run.
+    """
+    pd = require_pandas()
+    
+    if df.empty:
+        print('No runs found.')
+        return pd.DataFrame()
+    
+    # Only trust "running" status from wandb
+    has_wandb = df['found_in'].isin(['wandb', 'both']) if 'found_in' in df.columns else True
+    running = df[(df['status'] == 'running') & has_wandb].copy()
+    
+    if running.empty:
+        print("No running runs found (wandb-verified).")
+        return pd.DataFrame()
+    
+    # Count per task
+    counts = running.groupby('task').agg({
+        'wandb_run_id': 'count',
+        'exp_name': lambda x: list(x),
+    }).rename(columns={'wandb_run_id': 'count'})
+    
+    duplicates = counts[counts['count'] > 1].sort_values('count', ascending=False)
+    
+    if duplicates.empty:
+        print("\n✅ No duplicate running runs detected!")
+        return duplicates
+    
+    print(f"\n🔄 DUPLICATE RUNNING RUNS ({len(duplicates)} tasks with >1 run):")
+    print("-" * 70)
+    print(f"{'Task':<40} {'Runs':>8}")
+    print("-" * 70)
+    
+    for task, row in duplicates.iterrows():
+        print(f"   {task:<37} {row['count']:>8}")
+    
+    print("-" * 70)
+    print(f"   Total duplicate runs: {duplicates['count'].sum() - len(duplicates)}")
+    
+    return duplicates.reset_index()
+
+
+def duplicate_run_details(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Show detailed info about duplicate running runs, with recommendations for which to terminate.
+    
+    For each task with multiple running runs, shows:
+    - Each run's wandb_run_id, exp_name, current step
+    - Recommendation: KEEP (highest step) or KILL (lower step)
+    
+    Returns DataFrame with all duplicate runs and termination recommendations.
+    """
+    pd = require_pandas()
+    from .analysis import attach_max_step
+    
+    if df.empty:
+        print('No runs found.')
+        return pd.DataFrame()
+    
+    df_with_step = attach_max_step(df)
+    
+    # Only trust "running" status from wandb
+    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else True
+    running = df_with_step[(df_with_step['status'] == 'running') & has_wandb].copy()
+    
+    if running.empty:
+        print("No running runs found (wandb-verified).")
+        return pd.DataFrame()
+    
+    # Find tasks with multiple running runs
+    task_counts = running.groupby('task').size()
+    duplicate_tasks = task_counts[task_counts > 1].index.tolist()
+    
+    if not duplicate_tasks:
+        print("\n✅ No duplicate running runs detected!")
+        return pd.DataFrame()
+    
+    # Filter to only duplicate runs
+    dup_runs = running[running['task'].isin(duplicate_tasks)].copy()
+    
+    # For each task, mark which to keep (highest step) and which to kill
+    max_steps_per_task = dup_runs.groupby('task')['max_step'].transform('max')
+    dup_runs['recommendation'] = dup_runs.apply(
+        lambda row: 'KEEP ✓' if row['max_step'] == max_steps_per_task[row.name] else 'KILL ✗',
+        axis=1
+    )
+    dup_runs = dup_runs.sort_values(['task', 'max_step'], ascending=[True, False])
+    
+    # Select columns to display
+    display_cols = ['task', 'wandb_run_id', 'exp_name', 'max_step', 'recommendation']
+    available_cols = [c for c in display_cols if c in dup_runs.columns]
+    result = dup_runs[available_cols].copy()
+    
+    # Print detailed info
+    print("\n" + "=" * 90)
+    print(f"{'DUPLICATE RUNS - DETAILED ANALYSIS':^90}")
+    print("=" * 90)
+    print(f"  Tasks with duplicates: {len(duplicate_tasks)}")
+    print(f"  Total runs to review:  {len(dup_runs)}")
+    print(f"  Runs to terminate:     {(result['recommendation'] == 'KILL ✗').sum()}")
+    print("=" * 90)
+    
+    for task in duplicate_tasks:
+        task_runs = result[result['task'] == task]
+        print(f"\n📋 {task}:")
+        print("-" * 90)
+        print(f"   {'wandb_run_id':<15} {'exp_name':<30} {'step':>12} {'action':>12}")
+        print("-" * 90)
+        for _, row in task_runs.iterrows():
+            step_str = f"{int(row['max_step']):,}" if pd.notna(row['max_step']) else "?"
+            run_id = row.get('wandb_run_id', '?')[:12] if row.get('wandb_run_id') else '?'
+            exp_name = str(row.get('exp_name', '?'))[:28]
+            print(f"   {run_id:<15} {exp_name:<30} {step_str:>12} {row['recommendation']:>12}")
+    
+    print("\n" + "=" * 90)
+    
+    # Print termination commands
+    runs_to_kill = result[result['recommendation'] == 'KILL ✗']
+    if not runs_to_kill.empty:
+        print("\n🛑 RUNS TO TERMINATE (lower step, keeping higher):")
+        print("-" * 90)
+        for _, row in runs_to_kill.iterrows():
+            run_id = row.get('wandb_run_id', '?')
+            print(f"   wandb run stop {run_id}  # {row['task']}")
+        print("-" * 90)
+        
+        # Generate complete bash command
+        all_run_ids = runs_to_kill['wandb_run_id'].dropna().tolist()
+        print("\n   To terminate all at once, run:")
+        print(f"   for run_id in {' '.join(all_run_ids)}; do wandb run stop $run_id; done")
+    
+    return result
+
+
+def currently_running_tasks(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
+    """Show all tasks that have at least one running run, with progress info.
+    
+    Only counts wandb-verified running runs. Note: wandb "running" may include
+    LSF-suspended jobs (SSUSP) since they haven't cleanly exited.
+    
+    Returns DataFrame with task, running_runs, progress info.
+    """
+    pd = require_pandas()
+    
+    summary = running_runs_summary(df, target_step=target_step)
+    if summary.empty:
+        return summary
+    
+    # Filter to tasks with running runs
+    running = summary[summary['running_runs'] > 0].copy()
+    running = running.sort_values('progress_pct', ascending=True)
+    
+    if running.empty:
+        print("\n❌ No tasks currently have running runs (wandb-verified)!")
+        return running
+    
+    total_runs = running['running_runs'].sum()
+    print(f"\n🏃 CURRENTLY RUNNING TASKS ({len(running)} tasks, {total_runs} runs per wandb):")
+    print("   Note: wandb 'running' may include LSF-suspended jobs (SSUSP)")
+    print("-" * 70)
+    print(f"{'Task':<40} {'Runs':>6} {'Progress':>12} {'Max Step':>12}")
+    print("-" * 70)
+    
+    for _, row in running.iterrows():
+        step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
+        dup_marker = " 🔄" if row['has_duplicates'] else ""
+        print(f"   {row['task']:<37} {int(row['running_runs']):>6} {row['progress_pct']:>10.1f}% {step_str:>12}{dup_marker}")
+    
+    print("-" * 70)
+    
+    return running

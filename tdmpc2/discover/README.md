@@ -105,6 +105,14 @@ python runs.py --save runs.parquet      # Save to file
 - `running` → `running`
 - `crashed`, `failed`, `killed` → `crashed`
 
+**Important:** For runs that exist in both local and wandb, the wandb status is preferred (more reliable). Local-only runs may have stale "running" status if they crashed without clean shutdown.
+
+**Understanding "running" counts:**
+- **Wandb "running"**: Runs that wandb thinks are active. May include LSF-suspended jobs (SSUSP).
+- **LSF RUN**: Jobs actually using CPU right now.
+- **LSF SSUSP**: Jobs suspended by the cluster (process paused, wandb still says "running").
+- **Local-only "running"**: Unreliable - likely crashed runs with stale `run_info.yaml`.
+
 ### Collect Videos
 
 ```bash
@@ -151,6 +159,11 @@ df, timestamp, used_cache = cache.load(refresh=False)
 | `plot_max_steps(df, target_step)` | Horizontal bar chart of per-task progress |
 | `tasks_needing_attention(df, target_step)` | List not-started and lagging tasks |
 | `progress_by_domain(df, target_step)` | Aggregate progress by task domain prefix |
+| `running_runs_summary(df, target_step)` | Summary of wandb-verified running runs (ignores stale local status) |
+| `tasks_needing_restart(df, target_step)` | Incomplete tasks with no active runs in wandb |
+| `duplicate_running_runs(df)` | Detect tasks with multiple concurrent runs (wandb-verified) |
+| `duplicate_run_details(df)` | Detailed analysis of duplicates with termination recommendations |
+| `currently_running_tasks(df, target_step)` | Tasks with active runs per wandb (may include LSF-suspended) |
 
 ### Eval (`discover.eval`)
 
@@ -166,11 +179,12 @@ df, timestamp, used_cache = cache.load(refresh=False)
 The `browse_runs.ipynb` notebook provides:
 
 1. **Training Progress Overview** - Pie chart showing completed/in-progress/not-started breakdown
-2. **Per-Task Progress** - Bar chart with color coding (green=done, orange=progress, red=not started)
-3. **Tasks Requiring Attention** - Lists of not-started and lagging tasks
-4. **Progress by Domain** - Aggregate statistics grouped by task prefix (e.g., `walker-*`)
-5. **Evaluation Management** - Find tasks needing video generation, create LSF job scripts
-6. **Video Collection** - Gather videos from completed tasks for presentation
+2. **Currently Running Runs** - Track active runs, detect duplicates, identify tasks needing restart
+3. **Per-Task Progress** - Bar chart with color coding (green=done, orange=progress, red=not started)
+4. **Tasks Requiring Attention** - Lists of not-started and lagging tasks
+5. **Progress by Domain** - Aggregate statistics grouped by task prefix (e.g., `walker-*`)
+6. **Evaluation Management** - Find tasks needing video generation, create LSF job scripts
+7. **Video Collection** - Gather videos from completed tasks for presentation
 
 ## Workflow Example
 
@@ -185,7 +199,14 @@ The `browse_runs.ipynb` notebook provides:
    tasks_needing_attention(df, target_step=5_000_000)
    ```
 
-3. **Collect videos for presentation** (videos are generated during training with `save_video=True`):
+3. **Check running status** (identify crashed runs that need restart):
+   ```python
+   from discover.plots import running_runs_summary, tasks_needing_restart
+   running_runs_summary(df, target_step=5_000_000)
+   tasks_needing_restart(df, target_step=5_000_000)
+   ```
+
+4. **Collect videos for presentation** (videos are generated during training with `save_video=True`):
    ```python
    # From local logs:
    from discover.eval import collect_videos
@@ -201,7 +222,7 @@ The `browse_runs.ipynb` notebook provides:
    rsync -avz server:discover/videos_for_presentation/ ./videos/
    ```
 
-4. **Generate videos for tasks missing them** (rarely needed - videos are generated during training):
+5. **Generate videos for tasks missing them** (rarely needed - videos are generated during training):
    ```bash
    make gen-eval     # Find tasks without videos, generate LSF script
    make submit-eval  # Submit eval jobs
