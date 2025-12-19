@@ -176,8 +176,8 @@ df, timestamp, used_cache = cache.load(refresh=False)
 | `progress_by_domain(df, target_step)` | Aggregate progress by task domain prefix |
 | `running_runs_summary(df, target_step)` | Summary of wandb-verified running runs (ignores stale local status) |
 | `tasks_needing_restart(df, target_step)` | Incomplete tasks with no active runs in wandb |
-| `duplicate_running_runs(df)` | Detect tasks with multiple concurrent runs (wandb-verified) |
-| `duplicate_run_details(df)` | Detailed analysis of duplicates with termination recommendations |
+| `stale_wandb_runs(df)` | Detect tasks with stale wandb runs (from checkpoint resume) |
+| `stale_run_details(df)` | Detailed view of stale runs (no action needed, auto-timeout) |
 | `currently_running_tasks(df, target_step)` | Tasks with active runs per wandb (may include LSF-suspended) |
 
 ### Eval (`discover.eval`)

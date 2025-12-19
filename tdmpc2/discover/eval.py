@@ -26,17 +26,20 @@ def find_run_videos(run_dir: Path) -> List[Path]:
     """Find all video files in a run directory.
     
     Checks multiple locations where videos might be stored:
-    - wandb/run-*/files/media/videos/**/*.mp4 (wandb synced)
+    - wandb/run-*/files/media/videos/**/*.mp4 (wandb synced, new structure)
+    - **/wandb/run-*/files/media/videos/**/*.mp4 (wandb synced, old nested structure)
     - videos/*.mp4 (direct saves)
     """
     videos = []
-    # Wandb media directory (most common location)
+    # Wandb media directory - new flat structure
     videos.extend(run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
+    # Wandb media directory - old nested structure (e.g., task/seed/exp_name/wandb/...)
+    videos.extend(run_dir.glob("**/wandb/run-*/files/media/videos/**/*.mp4"))
     # Direct video saves
     video_dir = run_dir / "videos"
     if video_dir.is_dir():
         videos.extend(video_dir.glob("*.mp4"))
-    return sorted(videos)
+    return sorted(set(videos))  # Use set to deduplicate
 
 
 def find_task_videos(task: str, logs_dir: Path) -> List[str]:

@@ -356,7 +356,7 @@ def running_runs_summary(df: "pd.DataFrame", target_step: int = 5_000_000) -> "p
         print(f"  Stale local 'running':     {total_stale:>6}  ⚠️  (local-only, likely crashed)")
     print(f"  Tasks with running runs:   {tasks_with_running:>6}")
     print(f"  Tasks needing restart:     {tasks_needing_restart:>6}  ⚠️  (incomplete, no active run)")
-    print(f"  Tasks with duplicate runs: {tasks_with_duplicates:>6}  🔄 (>1 run for same task)")
+    print(f"  Tasks with stale runs:     {tasks_with_duplicates:>6}  🔄 (>1 wandb run, from resume)")
     print("=" * 70)
     
     return summary
@@ -402,12 +402,16 @@ def tasks_needing_restart(df: "pd.DataFrame", target_step: int = 5_000_000, show
     return needing
 
 
-def duplicate_running_runs(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Show tasks that have multiple runs currently running (potential waste of resources).
+def stale_wandb_runs(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Show tasks with multiple 'running' entries in wandb (typically stale runs from checkpoint resume).
     
-    Only counts wandb-verified running runs (not stale local-only status).
+    When a job resumes from checkpoint after preemption/SSUSP, it creates a new wandb run.
+    The old run stays "running" in wandb until it times out (~5-10 min of no heartbeat).
     
-    Returns DataFrame of tasks with >1 running run.
+    These are NOT duplicate jobs - there's only one LSF job per task. No action needed;
+    the stale runs will auto-timeout.
+    
+    Returns DataFrame of tasks with >1 wandb run showing as "running".
     """
     pd = require_pandas()
     
@@ -429,34 +433,41 @@ def duplicate_running_runs(df: "pd.DataFrame") -> "pd.DataFrame":
         'exp_name': lambda x: list(x),
     }).rename(columns={'wandb_run_id': 'count'})
     
-    duplicates = counts[counts['count'] > 1].sort_values('count', ascending=False)
+    stale = counts[counts['count'] > 1].sort_values('count', ascending=False)
     
-    if duplicates.empty:
-        print("\n✅ No duplicate running runs detected!")
-        return duplicates
+    if stale.empty:
+        print("\n✅ No stale wandb runs detected!")
+        return stale
     
-    print(f"\n🔄 DUPLICATE RUNNING RUNS ({len(duplicates)} tasks with >1 run):")
+    print(f"\n🔄 STALE WANDB RUNS ({len(stale)} tasks with >1 'running' in wandb):")
+    print("   Note: These are from checkpoint resume, NOT duplicate jobs. Will auto-timeout.")
     print("-" * 70)
-    print(f"{'Task':<40} {'Runs':>8}")
+    print(f"{'Task':<40} {'Wandb Runs':>10}")
     print("-" * 70)
     
-    for task, row in duplicates.iterrows():
-        print(f"   {task:<37} {row['count']:>8}")
+    for task, row in stale.iterrows():
+        print(f"   {task:<37} {row['count']:>10}")
     
     print("-" * 70)
-    print(f"   Total duplicate runs: {duplicates['count'].sum() - len(duplicates)}")
+    print(f"   Stale runs (will auto-timeout): {stale['count'].sum() - len(stale)}")
     
-    return duplicates.reset_index()
+    return stale.reset_index()
 
 
-def duplicate_run_details(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Show detailed info about duplicate running runs, with recommendations for which to terminate.
+# Keep old name as alias for backwards compatibility
+duplicate_running_runs = stale_wandb_runs
+
+
+def stale_run_details(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Show detailed info about stale wandb runs from checkpoint resume.
     
-    For each task with multiple running runs, shows:
-    - Each run's wandb_run_id, exp_name, current step
-    - Recommendation: KEEP (highest step) or KILL (lower step)
+    When a job resumes from checkpoint (after preemption/SSUSP), it creates a new wandb run.
+    The old wandb run remains "running" until it times out (~5-10 min of no heartbeat).
     
-    Returns DataFrame with all duplicate runs and termination recommendations.
+    This function shows which runs are stale (lower step) vs active (highest step).
+    NO ACTION NEEDED - stale runs will auto-timeout. There's only one LSF job per task.
+    
+    Returns DataFrame with all stale runs identified.
     """
     pd = require_pandas()
     from .analysis import attach_max_step
@@ -477,67 +488,62 @@ def duplicate_run_details(df: "pd.DataFrame") -> "pd.DataFrame":
     
     # Find tasks with multiple running runs
     task_counts = running.groupby('task').size()
-    duplicate_tasks = task_counts[task_counts > 1].index.tolist()
+    stale_tasks = task_counts[task_counts > 1].index.tolist()
     
-    if not duplicate_tasks:
-        print("\n✅ No duplicate running runs detected!")
+    if not stale_tasks:
+        print("\n✅ No stale wandb runs detected!")
         return pd.DataFrame()
     
-    # Filter to only duplicate runs
-    dup_runs = running[running['task'].isin(duplicate_tasks)].copy()
+    # Filter to only tasks with stale runs
+    stale_runs = running[running['task'].isin(stale_tasks)].copy()
     
-    # For each task, mark which to keep (highest step) and which to kill
-    max_steps_per_task = dup_runs.groupby('task')['max_step'].transform('max')
-    dup_runs['recommendation'] = dup_runs.apply(
-        lambda row: 'KEEP ✓' if row['max_step'] == max_steps_per_task[row.name] else 'KILL ✗',
+    # For each task, identify active (highest step) vs stale (lower step)
+    max_steps_per_task = stale_runs.groupby('task')['max_step'].transform('max')
+    stale_runs['status_detail'] = stale_runs.apply(
+        lambda row: 'ACTIVE ✓' if row['max_step'] == max_steps_per_task[row.name] else 'STALE ⏳',
         axis=1
     )
-    dup_runs = dup_runs.sort_values(['task', 'max_step'], ascending=[True, False])
+    stale_runs = stale_runs.sort_values(['task', 'max_step'], ascending=[True, False])
     
     # Select columns to display
-    display_cols = ['task', 'wandb_run_id', 'exp_name', 'max_step', 'recommendation']
-    available_cols = [c for c in display_cols if c in dup_runs.columns]
-    result = dup_runs[available_cols].copy()
+    display_cols = ['task', 'wandb_run_id', 'exp_name', 'max_step', 'status_detail']
+    available_cols = [c for c in display_cols if c in stale_runs.columns]
+    result = stale_runs[available_cols].copy()
     
     # Print detailed info
     print("\n" + "=" * 90)
-    print(f"{'DUPLICATE RUNS - DETAILED ANALYSIS':^90}")
+    print(f"{'STALE WANDB RUNS - DETAILED VIEW':^90}")
     print("=" * 90)
-    print(f"  Tasks with duplicates: {len(duplicate_tasks)}")
-    print(f"  Total runs to review:  {len(dup_runs)}")
-    print(f"  Runs to terminate:     {(result['recommendation'] == 'KILL ✗').sum()}")
+    print(f"  Tasks affected:        {len(stale_tasks)}")
+    print(f"  Total wandb runs:      {len(stale_runs)}")
+    print(f"  Stale (will timeout):  {(result['status_detail'] == 'STALE ⏳').sum()}")
+    print("-" * 90)
+    print("  ℹ️  These are from checkpoint resume after preemption/SSUSP.")
+    print("  ℹ️  Only ONE LSF job exists per task. NO ACTION NEEDED.")
+    print("  ℹ️  Stale runs will auto-timeout in ~5-10 min of no heartbeat.")
     print("=" * 90)
     
-    for task in duplicate_tasks:
+    for task in stale_tasks:
         task_runs = result[result['task'] == task]
         print(f"\n📋 {task}:")
         print("-" * 90)
-        print(f"   {'wandb_run_id':<15} {'exp_name':<30} {'step':>12} {'action':>12}")
+        print(f"   {'wandb_run_id':<15} {'exp_name':<30} {'step':>12} {'status':>12}")
         print("-" * 90)
         for _, row in task_runs.iterrows():
             step_str = f"{int(row['max_step']):,}" if pd.notna(row['max_step']) else "?"
             run_id = row.get('wandb_run_id', '?')[:12] if row.get('wandb_run_id') else '?'
             exp_name = str(row.get('exp_name', '?'))[:28]
-            print(f"   {run_id:<15} {exp_name:<30} {step_str:>12} {row['recommendation']:>12}")
+            print(f"   {run_id:<15} {exp_name:<30} {step_str:>12} {row['status_detail']:>12}")
     
     print("\n" + "=" * 90)
-    
-    # Print termination commands
-    runs_to_kill = result[result['recommendation'] == 'KILL ✗']
-    if not runs_to_kill.empty:
-        print("\n🛑 RUNS TO TERMINATE (lower step, keeping higher):")
-        print("-" * 90)
-        for _, row in runs_to_kill.iterrows():
-            run_id = row.get('wandb_run_id', '?')
-            print(f"   wandb run stop {run_id}  # {row['task']}")
-        print("-" * 90)
-        
-        # Generate complete bash command
-        all_run_ids = runs_to_kill['wandb_run_id'].dropna().tolist()
-        print("\n   To terminate all at once, run:")
-        print(f"   for run_id in {' '.join(all_run_ids)}; do wandb run stop $run_id; done")
+    print("  ✅ No action required. Stale runs will be marked as crashed by wandb automatically.")
+    print("=" * 90)
     
     return result
+
+
+# Keep old name as alias for backwards compatibility
+duplicate_run_details = stale_run_details
 
 
 def currently_running_tasks(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
@@ -571,8 +577,8 @@ def currently_running_tasks(df: "pd.DataFrame", target_step: int = 5_000_000) ->
     
     for _, row in running.iterrows():
         step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
-        dup_marker = " 🔄" if row['has_duplicates'] else ""
-        print(f"   {row['task']:<37} {int(row['running_runs']):>6} {row['progress_pct']:>10.1f}% {step_str:>12}{dup_marker}")
+        stale_marker = " 🔄" if row['has_duplicates'] else ""  # Multiple wandb runs from resume
+        print(f"   {row['task']:<37} {int(row['running_runs']):>6} {row['progress_pct']:>10.1f}% {step_str:>12}{stale_marker}")
     
     print("-" * 70)
     
