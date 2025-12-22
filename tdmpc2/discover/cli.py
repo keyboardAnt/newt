@@ -26,10 +26,8 @@ from typing import TYPE_CHECKING, List, Optional
 if TYPE_CHECKING:
     import pandas as pd
 
-from .config import (
-    get_logs_dir, get_cache_path, get_wandb_project, get_target_step,
-    load_task_list, task_to_index,
-)
+from .config import get_logs_dir, get_cache_path, get_wandb_project, get_target_step
+from tasks import load_task_list, task_to_index
 
 
 def require_pandas():
@@ -79,10 +77,14 @@ def cmd_status(args) -> int:
         wandb_project=args.wandb_project,
     )
     
+    # Filter to official tasks only
+    official_tasks = set(load_task_list())
+    
     if df.empty:
         print("No runs found.")
         return 1
     
+    df = df[df['task'].isin(official_tasks)]
     df_with_step = attach_max_step(df)
     best = best_step_by_task(df)
     
@@ -155,6 +157,10 @@ def cmd_running(args) -> int:
         print("No runs found.")
         return 1
     
+    # Filter to official tasks only
+    official_tasks = set(load_task_list())
+    df = df[df['task'].isin(official_tasks)]
+    
     # Show summary + running tasks list (currently_running_tasks calls running_runs_summary internally)
     currently_running_tasks(df, target_step=args.target_step)
     
@@ -174,23 +180,42 @@ def cmd_tasks(args) -> int:
         wandb_project=args.wandb_project,
     )
     
-    if df.empty:
-        print("No runs found.")
-        return 1
-    
     target = args.target_step
-    df_with_step = attach_max_step(df)
-    best = best_step_by_task(df)
     
-    # Determine running status per task
-    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(True, index=df_with_step.index)
-    running_mask = (df_with_step['status'] == 'running') & has_wandb
-    running_counts = df_with_step[running_mask].groupby('task').size()
+    # Get official task list
+    official_tasks = set(load_task_list())
     
-    # Build output table
-    best = best.copy()
-    best['progress_pct'] = (100 * best['max_step'].fillna(0) / target).clip(upper=100).round(1)
-    best['running_runs'] = best['task'].map(running_counts).fillna(0).astype(int)
+    if df.empty:
+        # No runs - show all official tasks as not started
+        best = pd.DataFrame({'task': list(official_tasks)})
+        best['max_step'] = 0
+        best['progress_pct'] = 0.0
+        best['running_runs'] = 0
+    else:
+        # Filter to official tasks only
+        df = df[df['task'].isin(official_tasks)]
+        
+        df_with_step = attach_max_step(df)
+        best = best_step_by_task(df)
+        
+        # Determine running status per task
+        has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(True, index=df_with_step.index)
+        running_mask = (df_with_step['status'] == 'running') & has_wandb
+        running_counts = df_with_step[running_mask].groupby('task').size()
+        
+        # Build output table
+        best = best.copy()
+        best['progress_pct'] = (100 * best['max_step'].fillna(0) / target).clip(upper=100).round(1)
+        best['running_runs'] = best['task'].map(running_counts).fillna(0).astype(int)
+        
+        # Add any official tasks with no runs yet
+        missing_tasks = official_tasks - set(best['task'])
+        if missing_tasks:
+            missing_df = pd.DataFrame({'task': list(missing_tasks)})
+            missing_df['max_step'] = 0
+            missing_df['progress_pct'] = 0.0
+            missing_df['running_runs'] = 0
+            best = pd.concat([best, missing_df], ignore_index=True)
     
     # Categorize
     best['category'] = 'stalled'
@@ -256,6 +281,10 @@ def cmd_domains(args) -> int:
         print("No runs found.")
         return 1
     
+    # Filter to official tasks only
+    official_tasks = set(load_task_list())
+    df = df[df['task'].isin(official_tasks)]
+    
     target = args.target_step
     best = best_step_by_task(df)
     
@@ -320,6 +349,10 @@ def cmd_restart(args) -> int:
         print("No runs found.")
         return 1
     
+    # Filter to official tasks only
+    official_tasks = set(load_task_list())
+    df = df[df['task'].isin(official_tasks)]
+    
     # Get tasks needing restart
     needing = tasks_needing_restart(df, target_step=args.target_step)
     
@@ -336,24 +369,23 @@ def cmd_restart(args) -> int:
         return 1
     
     # Group by queue/GPU-mode (matching submit_expert_array.sh)
-    # 1-70: long-gpu exclusive, 71-86: short-gpu exclusive, 
-    # 87-122: long-gpu shared (ManiSkill), 123-200: short-gpu exclusive
+    # Tasks from tasks.json sorted alphabetically (225 total after filtering variants):
+    # 1-58: long-gpu exclusive (non-ManiSkill)
+    # 59-105: long-gpu shared (ManiSkill, needs non-exclusive GPU for SAPIEN/Vulkan)
+    # 106-225: short-gpu exclusive (non-ManiSkill)
     groups = {
         'long_exclusive': [],
-        'short_exclusive_1': [],
         'long_shared': [],
-        'short_exclusive_2': [],
+        'short_exclusive': [],
     }
     
     for task, idx in task_indices:
-        if 1 <= idx <= 70:
+        if 1 <= idx <= 58:
             groups['long_exclusive'].append((task, idx))
-        elif 71 <= idx <= 86:
-            groups['short_exclusive_1'].append((task, idx))
-        elif 87 <= idx <= 122:
+        elif 59 <= idx <= 105:
             groups['long_shared'].append((task, idx))
-        elif 123 <= idx <= 200:
-            groups['short_exclusive_2'].append((task, idx))
+        elif 106 <= idx <= 225:
+            groups['short_exclusive'].append((task, idx))
     
     # Generate bsub commands
     tdmpc2_dir = get_logs_dir().parent  # tdmpc2/
@@ -389,20 +421,15 @@ def cmd_restart(args) -> int:
         cmd = format_bsub_cmd(indices, 'long-gpu', 'exclusive', '48:00')
         commands.append(('long-gpu (exclusive, 48h)', cmd, groups['long_exclusive']))
     
-    if groups['short_exclusive_1']:
-        indices = [idx for _, idx in groups['short_exclusive_1']]
-        cmd = format_bsub_cmd(indices, 'short-gpu', 'exclusive', '5:45')
-        commands.append(('short-gpu (exclusive, 6h)', cmd, groups['short_exclusive_1']))
-    
     if groups['long_shared']:
         indices = [idx for _, idx in groups['long_shared']]
         cmd = format_bsub_cmd(indices, 'long-gpu', 'shared', '48:00')
         commands.append(('long-gpu (shared/ManiSkill, 48h)', cmd, groups['long_shared']))
     
-    if groups['short_exclusive_2']:
-        indices = [idx for _, idx in groups['short_exclusive_2']]
+    if groups['short_exclusive']:
+        indices = [idx for _, idx in groups['short_exclusive']]
         cmd = format_bsub_cmd(indices, 'short-gpu', 'exclusive', '5:45')
-        commands.append(('short-gpu (exclusive, 6h)', cmd, groups['short_exclusive_2']))
+        commands.append(('short-gpu (exclusive, 6h)', cmd, groups['short_exclusive']))
     
     # Print or execute
     print("\n" + "=" * 80)

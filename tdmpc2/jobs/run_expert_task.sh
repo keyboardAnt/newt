@@ -6,8 +6,8 @@ cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 # Ensure video deps for wandb.Video (moviepy, imageio-ffmpeg)
 pip install -q "wandb[media]"
 
-# Select this array job's task from the 200-task list (1-based index)
-TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_soup.txt)
+# Get task name from tasks.py (ensures consistent filtering of variant tasks)
+TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 
 python train.py \

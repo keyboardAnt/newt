@@ -13,10 +13,8 @@ Modules:
 
 # Primary API
 from .api import load_df, load_df_with_meta
-from .config import (
-    get_logs_dir, get_cache_path, get_wandb_project, get_target_step,
-    load_task_list, task_to_index, index_to_task,
-)
+from .config import get_logs_dir, get_cache_path, get_wandb_project, get_target_step
+from tasks import load_task_list, task_to_index, index_to_task
 
 # Low-level discovery
 from .runs import discover_local_logs, discover_wandb_runs

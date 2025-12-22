@@ -132,7 +132,7 @@ bjobs -J 'newt-expert*'
 ```
 
 The restart command:
-- Maps task names to `jobs/tasks_soup.txt` indices
+- Maps task names to indices via `tdmpc2/tasks.py` (loaded from `tasks.json`)
 - Groups by queue/GPU-mode (matching `jobs/submit_expert_array.sh`)
 - Generates proper `bsub` commands with correct queue, walltime, GPU mode
 
@@ -214,4 +214,4 @@ make videos-collect
 
 # 6. Download videos to local machine
 rsync -avz server:tdmpc2/discover/videos_for_presentation/ ./videos/
-```
+   ```
