@@ -2,244 +2,216 @@
 
 Tools for discovering, analyzing, and visualizing TD-MPC2 training runs from local logs and Weights & Biases.
 
-## Log Directory Structure
-
-All logs use a **run-first** structure where each run gets a unique timestamp-based directory. This design supports both single-task and multi-task training (e.g., "soup" with 200 tasks).
-
-```
-logs/<YYYYMMDD_HHMMSS>[_exp_name]/
-├── run_info.yaml      # Metadata: task(s), seed, exp_name, LSF job ID, git commit, etc.
-├── checkpoints/       # Model checkpoints (shared across all tasks in multi-task runs)
-├── videos/            # Evaluation videos (organized by task for multi-task runs)
-│   ├── walker-walk/
-│   └── cup-catch/
-└── wandb/             # Wandb sync data
-```
-
-**Example:**
-```
-logs/
-├── 20251215_234251/                   # Single-task run (walker-walk)
-├── 20251216_091500_ablation_lr/       # Single-task run with custom exp_name
-└── 20251216_143000_soup_full/         # Multi-task run (200 tasks, one checkpoint)
-```
-
-Common operations:
-- List all runs: `ls logs/`
-- Find latest run: `ls logs/ | tail -1`
-- Find today's runs: `ls logs/ | grep ^$(date +%Y%m%d)`
-- Find runs for a task: `grep -l '"walker-walk"' logs/*/run_info.yaml`
-- Find failed runs: `grep -l "status: failed" logs/*/run_info.yaml`
-
-## Installation
-
-The module requires `pandas` and `matplotlib`. These are included in the main project's conda environment.
-
 ## Quick Start
 
-```python
-from pathlib import Path
-from discover import RunsCache, training_overview, plot_max_steps
+### CLI (Primary Interface)
 
-# Load runs (uses cache if available)
-cache = RunsCache(
-    logs_dir=Path('tdmpc2/logs'),
-    cache_path=Path('discover/runs_cache.parquet'),
-    wandb_project='wm-planning/mmbench',
-)
-df, timestamp, used_cache = cache.load(refresh=False)
+```bash
+# From repo root:
+make status              # Training progress overview
+make running             # Currently running tasks
+make tasks               # List all tasks with progress
+make restart             # Show bsub commands to restart stalled tasks
+make restart-submit      # Actually submit restart jobs
+
+# Or directly:
+cd tdmpc2
+python -m discover status
+python -m discover running
+python -m discover tasks
+python -m discover restart --submit
+```
+
+### Python API
+
+```python
+from discover import load_df, training_overview, plot_max_steps
+
+# Load runs (uses cache)
+df = load_df(refresh=False)
 
 # Visualize progress
 training_overview(df, target_step=5_000_000)
 plot_max_steps(df, target_step=5_000_000)
 ```
 
-Or use the interactive notebook: `discover/browse_runs.ipynb`
+### Interactive Notebook
+
+Open `discover/browse_runs.ipynb` for visualizations and CLI output logging.
+
+## CLI Commands
+
+All commands are available via `python -m discover <command>` or `make <target>`.
+
+| Command | Make Target | Description |
+|---------|-------------|-------------|
+| `status` | `make status` | Training progress overview (completed/running/stalled/not-started) |
+| `running` | `make running` | Currently running tasks (wandb-verified) |
+| `tasks` | `make tasks` | List all tasks with progress |
+| `domains` | `make domains` | Progress grouped by domain |
+| `refresh` | `make refresh` | Force refresh cache from local logs + wandb |
+| `restart` | `make restart` | Show bsub commands for stalled tasks (dry-run) |
+| `restart --submit` | `make restart-submit` | Actually submit restart jobs |
+| `eval list` | `make gen-eval` | List tasks needing eval (no videos) |
+| `eval submit --submit` | `make submit-eval` | Generate & submit eval jobs |
+| `videos collect` | `make videos-collect` | Collect videos for presentation |
+| `videos prune` | `make videos-prune` | Remove old checkpoint videos |
+
+### Common Options
+
+```bash
+python -m discover status --refresh         # Force refresh before showing status
+python -m discover tasks --format json      # Output as JSON (also: csv, table)
+python -m discover tasks --not-started      # Filter to not-started tasks
+python -m discover tasks --stalled          # Filter to stalled tasks
+python -m discover --help                   # Show all options
+```
+
+## Log Directory Structure
+
+All logs use a **run-first** structure where each run gets a unique timestamp-based directory.
+
+```
+logs/<YYYYMMDD_HHMMSS>[_exp_name]/
+├── run_info.yaml      # Metadata: task(s), seed, exp_name, LSF job ID, git commit
+├── checkpoints/       # Model checkpoints
+├── videos/            # Evaluation videos
+└── wandb/             # Wandb sync data
+```
 
 ## Module Structure
 
 ```
 discover/
+├── cli.py           # Unified CLI (python -m discover)
+├── api.py           # Simple API: load_df()
+├── config.py        # Centralized configuration
 ├── runs.py          # Run discovery (local logs + W&B)
-├── status.py        # CLI for training status overview
 ├── cache.py         # Caching and data loading
 ├── analysis.py      # Data analysis functions
 ├── plots.py         # Visualization functions
 ├── eval.py          # Evaluation and video management
-├── collect_videos.py    # Standalone CLI for video collection
-└── browse_runs.ipynb    # Interactive notebook
+└── browse_runs.ipynb    # Interactive notebook (visualizations only)
 ```
 
-## CLI Usage
-
-### Training Status
-
-Quick overview of training progress:
-
-```bash
-# From repo root:
-make status                         # Training progress overview
-make status-debug                   # With detailed debug info
-
-# Or directly:
-python status.py                    # Show training status summary
-python status.py --debug            # Show detailed debug info
-python status.py --limit 100        # Limit wandb runs fetched
-```
-
-### Discover Runs
-
-Defaults are hardcoded: local logs from `tdmpc2/logs`, wandb from `wm-planning/mmbench`.
-
-```bash
-python runs.py --print                  # All runs (local + wandb)
-python runs.py --status completed --print  # Filter by status
-python runs.py --local-only --print     # Skip wandb
-python runs.py --wandb-only --print     # Skip local
-python runs.py --found-in local --print # Runs not synced to wandb
-python runs.py --save runs.parquet      # Save to file
-```
+## Understanding Run Status
 
 **Status normalization:** Wandb's `state` is mapped to unified `status`:
 - `finished` → `completed`
 - `running` → `running`
 - `crashed`, `failed`, `killed` → `crashed`
 
-**Important:** For runs that exist in both local and wandb, the wandb status is preferred (more reliable). Local-only runs may have stale "running" status if they crashed without clean shutdown.
+**Task categories in `discover status`:**
+- 🟢 **Completed**: Reached target step (5M)
+- 🔵 **Running**: Incomplete but has active runs in wandb
+- 🟠 **Stalled**: Incomplete, has progress, but no active runs (needs restart)
+- 🔴 **Not Started**: 0 steps
 
-**Understanding "running" counts:**
-- **Wandb "running"**: Runs that wandb thinks are active. May include LSF-suspended jobs (SSUSP).
+**Understanding "running" vs actual LSF state:**
+- **Wandb "running"**: Runs that wandb thinks are active. May include LSF-suspended (SSUSP) jobs.
 - **LSF RUN**: Jobs actually using CPU right now.
-- **LSF SSUSP**: Jobs suspended by the cluster (process paused, wandb still says "running").
+- **LSF SSUSP**: Jobs suspended by cluster (process paused, wandb still says "running").
 - **Local-only "running"**: Unreliable - likely crashed runs with stale `run_info.yaml`.
 
-### Collect Videos
+## Restart Workflow
+
+When tasks are stalled (incomplete, no active wandb runs), restart them:
 
 ```bash
-# Collect videos from tasks ≥50% trained (symlinks)
-python discover/collect_videos.py --min-progress 0.5
+# 1. See what needs restart
+make running
 
-# Copy files instead of symlinks
-python discover/collect_videos.py --copy --output ./my_videos
+# 2. Preview restart commands (dry-run)
+make restart
 
-# Download to local machine
-rsync -avz <server>:discover/videos_for_presentation/ ./presentation_videos/
+# 3. Actually submit
+make restart-submit
+
+# 4. Monitor
+bjobs -J 'newt-expert*'
 ```
 
-### Prune Old Videos
+The restart command:
+- Maps task names to `jobs/tasks_soup.txt` indices
+- Groups by queue/GPU-mode (matching `jobs/submit_expert_array.sh`)
+- Generates proper `bsub` commands with correct queue, walltime, GPU mode
 
-When collecting videos multiple times during training, older checkpoint videos accumulate.
-Use `make prune-videos` to keep only the latest video per task:
+## Python API Reference
 
-```bash
-# Preview what would be removed
-make prune-videos-dry
-
-# Actually remove old videos
-make prune-videos
-```
-
-Note: `collect_videos()` now automatically prunes old videos by default (`prune_old=True`).
-
-## API Reference
-
-### Cache (`discover.cache`)
-
-**`RunsCache`**: Main class for loading and caching run data.
+### Primary API (`discover.api`)
 
 ```python
-cache = RunsCache(
-    logs_dir=Path('tdmpc2/logs'),
-    cache_path=Path('discover/runs_cache.parquet'),
-    wandb_project='wm-planning/mmbench',
-    wandb_limit=None,  # Optional limit on W&B runs
-)
-df, timestamp, used_cache = cache.load(refresh=False)
+from discover import load_df
+
+# Load runs from cache
+df = load_df(refresh=False)
+
+# Force refresh from local logs + wandb
+df = load_df(refresh=True)
 ```
+
+### Configuration (`discover.config`)
+
+```python
+from discover import get_logs_dir, get_target_step, get_wandb_project
+
+# All have environment variable overrides:
+# DISCOVER_LOGS_DIR, DISCOVER_TARGET_STEP, DISCOVER_WANDB_PROJECT
+```
+
+### Visualization (`discover.plots`)
+
+| Function | Description |
+|----------|-------------|
+| `training_overview(df, target_step)` | Pie chart + cumulative distribution + summary stats |
+| `plot_max_steps(df, target_step)` | Horizontal bar chart of per-task progress |
+| `progress_by_domain(df, target_step)` | Aggregate progress by domain with visualization |
 
 ### Analysis (`discover.analysis`)
 
 | Function | Description |
 |----------|-------------|
 | `attach_max_step(df)` | Add `max_step` column from checkpoint or W&B summary |
-| `attach_runtime(df)` | Add `runtime` column from W&B summary |
 | `best_step_by_task(df)` | Get run with highest step per task |
-| `best_runtime_by_task(df)` | Get run with highest runtime per task |
-
-### Plots (`discover.plots`)
-
-| Function | Description |
-|----------|-------------|
-| `training_overview(df, target_step)` | Pie chart + cumulative distribution + summary stats |
-| `plot_max_steps(df, target_step)` | Horizontal bar chart of per-task progress |
-| `tasks_needing_attention(df, target_step)` | List not-started and lagging tasks |
-| `progress_by_domain(df, target_step)` | Aggregate progress by task domain prefix |
-| `running_runs_summary(df, target_step)` | Summary of wandb-verified running runs (ignores stale local status) |
-| `tasks_needing_restart(df, target_step)` | Incomplete tasks with no active runs in wandb |
-| `stale_wandb_runs(df)` | Detect tasks with stale wandb runs (from checkpoint resume) |
-| `stale_run_details(df)` | Detailed view of stale runs (no action needed, auto-timeout) |
-| `currently_running_tasks(df, target_step)` | Tasks with active runs per wandb (may include LSF-suspended) |
 
 ### Eval (`discover.eval`)
 
 | Function | Description |
 |----------|-------------|
 | `collect_videos(df, logs_dir, output_dir, ...)` | Collect local videos into single directory |
-| `download_wandb_videos(df, output_dir, ...)` | Download videos directly from Wandb |
 | `tasks_ready_for_eval(df, logs_dir, ...)` | Find tasks ≥50% trained, check video status |
-| `generate_eval_script(tasks, output_dir, project_root)` | Generate LSF script for tasks missing videos |
-| `prune_old_videos(output_dir, dry_run=False)` | Remove old checkpoint videos (keep only latest per task) |
+| `generate_eval_script(tasks, output_dir, ...)` | Generate LSF script for tasks missing videos |
 
 ## Interactive Notebook
 
 The `browse_runs.ipynb` notebook provides:
 
-1. **Training Progress Overview** - Pie chart showing completed/in-progress/not-started breakdown
-2. **Currently Running Runs** - Track active runs, detect duplicates, identify tasks needing restart
-3. **Per-Task Progress** - Bar chart with color coding (green=done, orange=progress, red=not started)
-4. **Tasks Requiring Attention** - Lists of not-started and lagging tasks
-5. **Progress by Domain** - Aggregate statistics grouped by task prefix (e.g., `walker-*`)
-6. **Evaluation Management** - Find tasks needing video generation, create LSF job scripts
-7. **Video Collection** - Gather videos from completed tasks for presentation
+1. **Data Loading** - Load from cache via `load_df()`
+2. **CLI Output Logging** - Run CLI commands and capture output in notebook
+3. **Visualizations** - `training_overview()`, `plot_max_steps()`, `progress_by_domain()`
+
+Most text-based reports have moved to the CLI. The notebook focuses on visualizations.
 
 ## Workflow Example
 
-1. **Monitor training progress**:
-   ```python
-   df, _, _ = cache.load()
-   training_overview(df, target_step=5_000_000)
-   ```
+```bash
+# 1. Check overall status
+make status
 
-2. **Identify tasks needing attention**:
-   ```python
-   tasks_needing_attention(df, target_step=5_000_000)
-   ```
+# 2. Refresh if needed
+make refresh
 
-3. **Check running status** (identify crashed runs that need restart):
-   ```python
-   from discover.plots import running_runs_summary, tasks_needing_restart
-   running_runs_summary(df, target_step=5_000_000)
-   tasks_needing_restart(df, target_step=5_000_000)
-   ```
+# 3. See what's running / stalled
+make running
 
-4. **Collect videos for presentation** (videos are generated during training with `save_video=True`):
-   ```python
-   # From local logs:
-   from discover.eval import collect_videos
-   collect_videos(df, logs_dir, output_dir, min_progress=0.5)
-   
-   # Or download from Wandb:
-   from discover.eval import download_wandb_videos
-   download_wandb_videos(df, output_dir, min_progress=0.5)
-   ```
-   
-   ```bash
-   # Then download to laptop:
-   rsync -avz server:discover/videos_for_presentation/ ./videos/
-   ```
+# 4. Restart stalled tasks
+make restart            # Preview
+make restart-submit     # Submit
 
-5. **Generate videos for tasks missing them** (rarely needed - videos are generated during training):
-   ```bash
-   make gen-eval     # Find tasks without videos, generate LSF script
-   make submit-eval  # Submit eval jobs
-   ```
+# 5. Check eval status and collect videos
+make gen-eval
+make videos-collect
+
+# 6. Download videos to local machine
+rsync -avz server:tdmpc2/discover/videos_for_presentation/ ./videos/
+```

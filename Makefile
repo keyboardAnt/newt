@@ -1,76 +1,92 @@
 PYTHON ?= python
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-DISCOVER := $(ROOT)/tdmpc2/discover/runs.py
-STATUS := $(ROOT)/tdmpc2/discover/status.py
+TDMPC2 := $(ROOT)/tdmpc2
 
-.PHONY: help interactive interactive-nonexclusive submit-expert gen-eval submit-eval test-sanity \
-        status status-debug discover list-completed list-running list-crashed list-local-only list-wandb-only \
-        prune-videos prune-videos-dry
+.PHONY: help interactive interactive-nonexclusive submit-expert test-sanity \
+        status running tasks restart domains \
+        gen-eval submit-eval videos-collect videos-prune videos-prune-dry refresh
 
 help:
-	@echo "Targets:"
-	@echo "  status          Training progress overview"
-	@echo "  status-debug    Training status with debug info"
+	@echo "=== Observability ==="
+	@echo "  status          Training progress overview (completed/running/stalled/not-started)"
+	@echo "  running         Currently running tasks (wandb-verified)"
+	@echo "  tasks           List all tasks with progress"
+	@echo "  domains         Progress grouped by domain"
+	@echo "  refresh         Force refresh cache from local logs + wandb"
 	@echo ""
-	@echo "  discover        All runs (local + wandb)"
-	@echo "  list-completed  Completed runs"
-	@echo "  list-running    Running runs"
-	@echo "  list-crashed    Crashed runs"
-	@echo "  list-local-only Runs not synced to wandb"
-	@echo "  list-wandb-only Runs only on wandb"
+	@echo "=== Job Management ==="
+	@echo "  restart         Show bsub commands to restart stalled tasks (dry-run)"
+	@echo "  restart-submit  Actually submit restart jobs"
+	@echo "  submit-expert   Submit all expert training jobs (full 200 tasks)"
 	@echo ""
+	@echo "=== Evaluation & Videos ==="
+	@echo "  gen-eval        List tasks needing eval (no videos)"
+	@echo "  submit-eval     Generate & submit eval jobs for tasks without videos"
+	@echo "  videos-collect  Collect videos for presentation"
+	@echo "  videos-prune    Remove old checkpoint videos (keep only latest)"
+	@echo "  videos-prune-dry Preview what videos-prune would remove"
+	@echo ""
+	@echo "=== Interactive Sessions ==="
 	@echo "  interactive              Launch interactive GPU session (exclusive mode)"
 	@echo "  interactive-nonexclusive Launch interactive GPU session (shared mode, for ManiSkill)"
-	@echo "  submit-expert            Submit expert training jobs"
-	@echo "  gen-eval                 Generate eval task list (tasks needing videos)"
-	@echo "  submit-eval              Submit eval jobs for tasks in task list"
-	@echo "  prune-videos             Remove old checkpoint videos (keep only latest per task)"
-	@echo "  prune-videos-dry         Preview what prune-videos would remove"
+	@echo ""
+	@echo "=== Development ==="
+	@echo "  test-sanity     Run basic import tests"
 
-interactive:
-	@cd $(ROOT)/tdmpc2 && ./jobs/interactive.sh
-
-interactive-nonexclusive:
-	@cd $(ROOT)/tdmpc2 && ./jobs/interactive_nonexclusive.sh
-
-submit-expert:
-	@cd $(ROOT)/tdmpc2 && ./jobs/submit_expert_array.sh
-
-gen-eval:
-	@cd $(ROOT)/tdmpc2 && $(PYTHON) -m discover.eval
-
-submit-eval:
-	@cd $(ROOT)/tdmpc2 && bsub < jobs/run_eval_need_videos.lsf
-
-prune-videos:
-	@cd $(ROOT)/tdmpc2 && $(PYTHON) -c "import sys; sys.argv=['prune']; from discover.eval import prune_main; prune_main()"
-
-prune-videos-dry:
-	@cd $(ROOT)/tdmpc2 && $(PYTHON) -c "import sys; sys.argv=['prune', '--dry-run']; from discover.eval import prune_main; prune_main()"
-
-test-sanity:
-	@cd $(ROOT)/tdmpc2 && ./tests/test_imports.sh
+# === Observability ===
 
 status:
-	@cd $(ROOT)/tdmpc2 && $(PYTHON) discover/status.py
+	@cd $(TDMPC2) && $(PYTHON) -m discover status
 
-status-debug:
-	@cd $(ROOT)/tdmpc2 && $(PYTHON) discover/status.py --debug
+running:
+	@cd $(TDMPC2) && $(PYTHON) -m discover running
 
-discover:
-	@$(PYTHON) $(DISCOVER) --print
+tasks:
+	@cd $(TDMPC2) && $(PYTHON) -m discover tasks
 
-list-completed:
-	@$(PYTHON) $(DISCOVER) --status completed --print
+domains:
+	@cd $(TDMPC2) && $(PYTHON) -m discover domains
 
-list-running:
-	@$(PYTHON) $(DISCOVER) --status running --print
+refresh:
+	@cd $(TDMPC2) && $(PYTHON) -m discover refresh
 
-list-crashed:
-	@$(PYTHON) $(DISCOVER) --status crashed --print
+# === Job Management ===
 
-list-local-only:
-	@$(PYTHON) $(DISCOVER) --found-in local --print
+restart:
+	@cd $(TDMPC2) && $(PYTHON) -m discover restart
 
-list-wandb-only:
-	@$(PYTHON) $(DISCOVER) --found-in wandb --print
+restart-submit:
+	@cd $(TDMPC2) && $(PYTHON) -m discover restart --submit
+
+submit-expert:
+	@cd $(TDMPC2) && ./jobs/submit_expert_array.sh
+
+# === Evaluation & Videos ===
+
+gen-eval:
+	@cd $(TDMPC2) && $(PYTHON) -m discover eval list
+
+submit-eval:
+	@cd $(TDMPC2) && $(PYTHON) -m discover eval submit --submit
+
+videos-collect:
+	@cd $(TDMPC2) && $(PYTHON) -m discover videos collect
+
+videos-prune:
+	@cd $(TDMPC2) && $(PYTHON) -m discover videos prune
+
+videos-prune-dry:
+	@cd $(TDMPC2) && $(PYTHON) -m discover videos prune --dry-run
+
+# === Interactive Sessions ===
+
+interactive:
+	@cd $(TDMPC2) && ./jobs/interactive.sh
+
+interactive-nonexclusive:
+	@cd $(TDMPC2) && ./jobs/interactive_nonexclusive.sh
+
+# === Development ===
+
+test-sanity:
+	@cd $(TDMPC2) && ./tests/test_imports.sh

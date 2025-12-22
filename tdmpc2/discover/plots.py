@@ -136,7 +136,7 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     if non_zero:
         sizes_nz, labels_nz, colors_nz, explode_nz = zip(*non_zero)
         ax1.pie(sizes_nz, labels=labels_nz, colors=colors_nz, explode=explode_nz,
-                autopct='%1.1f%%', startangle=90, textprops={'fontsize': 10})
+            autopct='%1.1f%%', startangle=90, textprops={'fontsize': 10})
     ax1.set_title('Task Status Breakdown')
     
     # Cumulative progress
