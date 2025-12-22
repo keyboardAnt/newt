@@ -162,15 +162,9 @@ The `discover/` module provides tools for monitoring training runs, tracking pro
 **Quick start:**
 
 ```python
-from pathlib import Path
-from discover import RunsCache, training_overview
+from discover import load_df, training_overview
 
-cache = RunsCache(
-    logs_dir=Path('logs'),
-    cache_path=Path('discover/runs_cache.parquet'),
-    wandb_project='<entity/project>',
-)
-df, _, _ = cache.load()
+df = load_df()  # Uses cache; add refresh=True to re-fetch
 training_overview(df, target_step=5_000_000)
 ```
 
@@ -180,17 +174,16 @@ Or use the interactive notebook: `tdmpc2/discover/browse_runs.ipynb`
 
 ```bash
 make status           # Training progress overview
-make status-debug     # Status with detailed debug info
+make running          # Currently running tasks
+make tasks            # All tasks with progress (225 official tasks)
+make restart          # Show restart commands for stalled tasks
+make restart-submit   # Actually submit restart jobs
 
-make discover         # All runs (local + wandb)
-make list-completed   # Completed runs
-make list-running     # Running runs
-make list-crashed     # Crashed runs
-make list-local-only  # Not synced to wandb
-make list-wandb-only  # Only on wandb (no local logs)
-
-# Collect videos from trained tasks (videos are generated during training)
-cd tdmpc2 && python discover/collect_videos.py --min-progress 0.5
+# Or directly:
+cd tdmpc2
+python -m discover status
+python -m discover tasks --all  # Include non-official tasks
+python -m discover --help       # All options
 ```
 
 ----
@@ -202,20 +195,19 @@ Run `make help` to see all available targets:
 | Target | Description |
 |--------|-------------|
 | `make status` | Training progress overview |
-| `make status-debug` | Status with detailed debug info |
-| `make discover` | All runs (local + wandb) |
-| `make list-completed` | Completed runs |
-| `make list-running` | Running runs |
-| `make list-crashed` | Crashed runs |
-| `make list-local-only` | Runs not synced to wandb |
-| `make list-wandb-only` | Runs only on wandb |
+| `make running` | Currently running tasks |
+| `make tasks` | All tasks with progress |
+| `make domains` | Progress by domain |
+| `make restart` | Show restart commands for stalled tasks |
+| `make restart-submit` | Actually submit restart jobs |
 | `make interactive` | Launch interactive GPU session (exclusive mode) |
 | `make interactive-nonexclusive` | Launch interactive GPU session (shared mode, for ManiSkill) |
 | `make submit-expert` | Submit expert training jobs |
-| `make gen-eval` | Generate eval task list (for tasks missing videos) |
-| `make submit-eval` | Submit eval jobs (rarely needed - videos generated during training) |
-| `make prune-videos` | Remove old checkpoint videos (keep only latest per task) |
-| `make prune-videos-dry` | Preview what prune-videos would remove |
+| `make gen-eval` | List tasks needing eval (missing videos) |
+| `make submit-eval` | Submit eval jobs |
+| `make videos-collect` | Collect videos for presentation |
+| `make videos-prune` | Remove old checkpoint videos (keep only latest) |
+| `make videos-prune-dry` | Preview what videos-prune would remove |
 
 ----
 

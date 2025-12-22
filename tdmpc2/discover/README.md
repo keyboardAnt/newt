@@ -64,8 +64,12 @@ python -m discover status --refresh         # Force refresh before showing statu
 python -m discover tasks --format json      # Output as JSON (also: csv, table)
 python -m discover tasks --not-started      # Filter to not-started tasks
 python -m discover tasks --stalled          # Filter to stalled tasks
+python -m discover tasks --all              # Include non-official tasks (e.g., smoke-test)
 python -m discover --help                   # Show all options
 ```
+
+**Note:** By default, commands only show official tasks from `tasks.json` (225 tasks).
+Use `--all` to include all runs in the cache (including test/debug runs like `smoke-test`, `default`, etc.).
 
 ## Log Directory Structure
 

@@ -77,14 +77,15 @@ def cmd_status(args) -> int:
         wandb_project=args.wandb_project,
     )
     
-    # Filter to official tasks only
-    official_tasks = set(load_task_list())
-    
     if df.empty:
         print("No runs found.")
         return 1
     
-    df = df[df['task'].isin(official_tasks)]
+    # Filter to official tasks only (unless --all)
+    if not getattr(args, 'show_all', False):
+        official_tasks = set(load_task_list())
+        df = df[df['task'].isin(official_tasks)]
+    
     df_with_step = attach_max_step(df)
     best = best_step_by_task(df)
     
@@ -157,9 +158,10 @@ def cmd_running(args) -> int:
         print("No runs found.")
         return 1
     
-    # Filter to official tasks only
-    official_tasks = set(load_task_list())
-    df = df[df['task'].isin(official_tasks)]
+    # Filter to official tasks only (unless --all)
+    if not getattr(args, 'show_all', False):
+        official_tasks = set(load_task_list())
+        df = df[df['task'].isin(official_tasks)]
     
     # Show summary + running tasks list (currently_running_tasks calls running_runs_summary internally)
     currently_running_tasks(df, target_step=args.target_step)
@@ -181,19 +183,24 @@ def cmd_tasks(args) -> int:
     )
     
     target = args.target_step
+    show_all = getattr(args, 'show_all', False)
     
-    # Get official task list
-    official_tasks = set(load_task_list())
+    # Get official task list (used for filtering and adding missing tasks)
+    official_tasks = set(load_task_list()) if not show_all else None
     
     if df.empty:
+        if show_all:
+            print("No runs found.")
+            return 1
         # No runs - show all official tasks as not started
         best = pd.DataFrame({'task': list(official_tasks)})
         best['max_step'] = 0
         best['progress_pct'] = 0.0
         best['running_runs'] = 0
     else:
-        # Filter to official tasks only
-        df = df[df['task'].isin(official_tasks)]
+        # Filter to official tasks only (unless --all)
+        if not show_all:
+            df = df[df['task'].isin(official_tasks)]
         
         df_with_step = attach_max_step(df)
         best = best_step_by_task(df)
@@ -208,14 +215,15 @@ def cmd_tasks(args) -> int:
         best['progress_pct'] = (100 * best['max_step'].fillna(0) / target).clip(upper=100).round(1)
         best['running_runs'] = best['task'].map(running_counts).fillna(0).astype(int)
         
-        # Add any official tasks with no runs yet
-        missing_tasks = official_tasks - set(best['task'])
-        if missing_tasks:
-            missing_df = pd.DataFrame({'task': list(missing_tasks)})
-            missing_df['max_step'] = 0
-            missing_df['progress_pct'] = 0.0
-            missing_df['running_runs'] = 0
-            best = pd.concat([best, missing_df], ignore_index=True)
+        # Add any official tasks with no runs yet (unless --all)
+        if not show_all:
+            missing_tasks = official_tasks - set(best['task'])
+            if missing_tasks:
+                missing_df = pd.DataFrame({'task': list(missing_tasks)})
+                missing_df['max_step'] = 0
+                missing_df['progress_pct'] = 0.0
+                missing_df['running_runs'] = 0
+                best = pd.concat([best, missing_df], ignore_index=True)
     
     # Categorize
     best['category'] = 'stalled'
@@ -281,9 +289,10 @@ def cmd_domains(args) -> int:
         print("No runs found.")
         return 1
     
-    # Filter to official tasks only
-    official_tasks = set(load_task_list())
-    df = df[df['task'].isin(official_tasks)]
+    # Filter to official tasks only (unless --all)
+    if not getattr(args, 'show_all', False):
+        official_tasks = set(load_task_list())
+        df = df[df['task'].isin(official_tasks)]
     
     target = args.target_step
     best = best_step_by_task(df)
@@ -610,9 +619,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     
     # status
     p_status = subparsers.add_parser('status', help='Show training progress summary')
+    p_status.add_argument('--all', action='store_true', dest='show_all',
+                          help='Show all tasks (including non-official)')
     
     # running
     p_running = subparsers.add_parser('running', help='Show currently running tasks')
+    p_running.add_argument('--all', action='store_true', dest='show_all',
+                           help='Show all tasks (including non-official)')
     
     # tasks
     p_tasks = subparsers.add_parser('tasks', help='List all tasks with progress')
@@ -622,11 +635,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_tasks.add_argument('--stalled', action='store_true', help='Filter to stalled tasks')
     p_tasks.add_argument('--running', action='store_true', help='Filter to running tasks')
     p_tasks.add_argument('--completed', action='store_true', help='Filter to completed tasks')
+    p_tasks.add_argument('--all', action='store_true', dest='show_all',
+                         help='Show all tasks (including non-official)')
     
     # domains
     p_domains = subparsers.add_parser('domains', help='Show progress by domain')
     p_domains.add_argument('--format', choices=['table', 'json', 'csv'], default='table',
                            help='Output format')
+    p_domains.add_argument('--all', action='store_true', dest='show_all',
+                           help='Show all tasks (including non-official)')
     
     # restart
     p_restart = subparsers.add_parser('restart', help='Show/submit jobs for stalled tasks')
