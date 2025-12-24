@@ -4,7 +4,6 @@ from pathlib import Path
 from time import time
 
 import torch
-import yaml
 import numpy as np
 from termcolor import colored
 from tqdm import tqdm
@@ -14,6 +13,7 @@ from discover import parse_step
 
 from common import barrier
 from common.auto_utd import AdaptiveUTD
+from common.run_info import update_run_info_resume
 
 
 def split_by_rank(global_list, rank, world_size):
@@ -26,422 +26,420 @@ def empty_metrics():
 
 
 class Trainer():
-	"""Trainer class for MMBench experiments."""
+    """Trainer class for MMBench experiments."""
 
-	def __init__(self, cfg, env, agent, buffer, logger):
-		self.cfg = cfg
-		self.env = env
-		self.agent = agent
-		self.buffer = buffer
-		self.logger = logger
-		self._step = 0
-		self._ep_idx = 0
-		self._start_time = time()
-		self._tasks = torch.tensor(split_by_rank(range(cfg.num_global_tasks), cfg.rank, cfg.world_size),
+    def __init__(self, cfg, env, agent, buffer, logger):
+        self.cfg = cfg
+        self.env = env
+        self.agent = agent
+        self.buffer = buffer
+        self.logger = logger
+        self._step = 0
+        self._ep_idx = 0
+        self._start_time = time()
+        self._tasks = torch.tensor(split_by_rank(range(cfg.num_global_tasks), cfg.rank, cfg.world_size),
 			dtype=torch.int32, device='cpu')
-		self._episode_lengths = torch.tensor(split_by_rank(cfg.episode_lengths, cfg.rank, cfg.world_size),
+        self._episode_lengths = torch.tensor(split_by_rank(cfg.episode_lengths, cfg.rank, cfg.world_size),
 			dtype=torch.int32, device='cpu')
-		if cfg.task != 'soup':
-			self._tasks = self._tasks.repeat_interleave(cfg.num_envs)
-		assert self.cfg.episode_length in self._episode_lengths, \
+        if cfg.task != 'soup':
+            self._tasks = self._tasks.repeat_interleave(cfg.num_envs)
+        assert self.cfg.episode_length in self._episode_lengths, \
 			f'[Rank {cfg.rank}] Expected maximum episode length {self.cfg.episode_length} to be in {self._episode_lengths.tolist()}.'
-		self._tds = TensorDict({}, batch_size=(self.cfg.episode_length+1, self.cfg.num_envs), device='cpu')
-		self._update_freq = self.cfg.num_envs * self.cfg.episode_length * self.cfg.world_size
-		self._update_tokens = 0
-		self._eps_per_update_freq = int((cfg.episode_length / np.array(cfg.episode_lengths)).sum())
-		
-		# Adaptive UTD scaling
-		self._auto_utd = AdaptiveUTD(
+        self._tds = TensorDict({}, batch_size=(self.cfg.episode_length+1, self.cfg.num_envs), device='cpu')
+        self._update_freq = self.cfg.num_envs * self.cfg.episode_length * self.cfg.world_size
+        self._update_tokens = 0
+        self._eps_per_update_freq = int((cfg.episode_length / np.array(cfg.episode_lengths)).sum())
+
+        # Adaptive UTD scaling
+        self._auto_utd = AdaptiveUTD(
 			initial_utd=cfg.utd,
 			max_utd=cfg.get('auto_utd_max', 0.5),
 			mode=cfg.get('auto_utd', 'off'),
 			work_dir=cfg.work_dir,
 			rank=cfg.rank,
 		)
-		
-		if cfg.rank == 0:
-			print('Architecture:', self.agent.model)
-			print(f'Update frequency: {self._update_freq:,}')
-			print(f'Episodes per update frequency: {self._eps_per_update_freq:,}')
-			if self._auto_utd.enabled:
-				self._auto_utd.print_config()
 
-	def common_metrics(self):
-		"""Return a dictionary of current metrics."""
-		elapsed_time = time() - self._start_time
-		return dict(
+        if cfg.rank == 0:
+            print('Architecture:', self.agent.model)
+            print(f'Update frequency: {self._update_freq:,}')
+            print(f'Episodes per update frequency: {self._eps_per_update_freq:,}')
+            if self._auto_utd.enabled:
+                self._auto_utd.print_config()
+
+    def common_metrics(self):
+        """Return a dictionary of current metrics."""
+        elapsed_time = time() - self._start_time
+        return dict(
 			step=self._step,
 			episode=self._ep_idx,
 			elapsed_time=elapsed_time,
 			steps_per_second=self._step / elapsed_time
 		)
 
-	def save_checkpoint(self, identifier=None):
-		"""Save a checkpoint for resuming training later."""
-		if identifier is None:
-			identifier = f'{self._step:,}'.replace(',', '_')
-		
-		# Save agent (model, optimizers, scale)
-		self.logger.save_agent(self.agent, identifier)
-		
-		# Save trainer state (only on rank 0 where model_dir exists)
-		if hasattr(self.logger, '_model_dir') and self.logger._model_dir:
-			state_path = Path(self.logger._model_dir) / f'{identifier}_trainer.pt'
-			checkpoint_data = {
+    def save_checkpoint(self, identifier=None):
+        """Save a checkpoint for resuming training later."""
+        if identifier is None:
+            identifier = f'{self._step:,}'.replace(',', '_')
+
+        # Save agent (model, optimizers, scale)
+        self.logger.save_agent(self.agent, identifier)
+
+        # Save trainer state (only on rank 0 where model_dir exists)
+        if hasattr(self.logger, '_model_dir') and self.logger._model_dir:
+            state_path = Path(self.logger._model_dir) / f'{identifier}_trainer.pt'
+            checkpoint_data = {
 				'step': self._step,
 				'ep_idx': self._ep_idx,
 			}
-			# Include auto-UTD config for reproducibility
-			if self._auto_utd.enabled:
-				checkpoint_data['auto_utd'] = self._auto_utd.get_effective_config()
-				self._auto_utd.save_log()  # Also save detailed log
-			torch.save(checkpoint_data, state_path)
-			if self.cfg.rank == 0:
-				print(colored(f'Saved checkpoint at step {self._step}.', 'green', attrs=['bold']))
+            # Include auto-UTD config for reproducibility
+            if self._auto_utd.enabled:
+                checkpoint_data["auto_utd"] = self._auto_utd.get_effective_config()
+                self._auto_utd.save_log()  # Also save detailed log
+            torch.save(checkpoint_data, state_path)
+            if self.cfg.rank == 0:
+                print(
+                    colored(
+                        f"Saved checkpoint at step {self._step}.",
+                        "green",
+                        attrs=["bold"],
+                    )
+                )
 
-	def load_checkpoint(self, checkpoint_path):
-		"""Load a checkpoint to resume training."""
-		checkpoint_path = Path(checkpoint_path)
-		
-		# Load agent with optimizer states
-		self.agent.load(checkpoint_path, resume=True)
-		
-		# Load trainer state
-		trainer_state_path = checkpoint_path.parent / f'{checkpoint_path.stem}_trainer.pt'
-		if trainer_state_path.exists():
-			state = torch.load(trainer_state_path, weights_only=True)
-			self._step = state['step']
-			self._ep_idx = state['ep_idx']
-		else:
-			# Fallback: parse step from filename
-			self._step = parse_step(checkpoint_path)
-			self._ep_idx = 0
-		
-		# Record resume lineage in run_info.yaml (only on rank 0)
-		if self.cfg.rank == 0:
-			self._update_run_info_resume(checkpoint_path, self._step)
-			print(colored(f'Resumed from checkpoint at step {self._step}.', 'blue', attrs=['bold']))
+    def load_checkpoint(self, checkpoint_path):
+        """Load a checkpoint to resume training."""
+        checkpoint_path = Path(checkpoint_path)
 
-	def _update_run_info_resume(self, loaded_checkpoint: Path, loaded_step: int):
-		"""
-		Update run_info.yaml with resume lineage after loading a checkpoint.
-		
-		This records the provenance of resumed runs, enabling:
-		- Tracking which checkpoint was used to resume
-		- Building lineage chains across multiple resumes
-		- Distinguishing fresh runs from resumed ones
-		
-		Args:
-			loaded_checkpoint: Path to the checkpoint file that was loaded
-			loaded_step: Training step from which the run resumed
-		"""
-		run_info_path = Path(self.cfg.work_dir) / 'run_info.yaml'
-		if not run_info_path.exists():
-			return
-		
-		# Extract parent_run_id from checkpoint path
-		# Checkpoint paths look like: logs/{run_id}/checkpoints/{step}.pt
-		# The run_id is the directory name containing 'checkpoints'
-		parent_run_id = None
-		try:
-			ckpt_parent = loaded_checkpoint.resolve().parent
-			if ckpt_parent.name == 'checkpoints':
-				parent_run_id = ckpt_parent.parent.name
-		except Exception:
-			pass  # If extraction fails, leave as None
-		
-		info = yaml.safe_load(run_info_path.read_text())
-		info['loaded_checkpoint'] = str(loaded_checkpoint)
-		info['loaded_step'] = loaded_step
-		info['parent_run_id'] = parent_run_id
-		run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
+        # Load agent with optimizer states
+        self.agent.load(checkpoint_path, resume=True)
 
-	def eval(self):
-		"""Evaluate agent and aggregate all completed episodes per unique task name."""
-		task_results = defaultdict(empty_metrics)
+        # Load trainer state
+        trainer_state_path = (
+            checkpoint_path.parent / f"{checkpoint_path.stem}_trainer.pt"
+        )
+        if trainer_state_path.exists():
+            state = torch.load(trainer_state_path, weights_only=True)
+            self._step = state["step"]
+            self._ep_idx = state["ep_idx"]
+        else:
+            # Fallback: parse step from filename
+            self._step = parse_step(checkpoint_path)
+            self._ep_idx = 0
 
-		obs, info = self.env.reset()
-		episode_reward = torch.zeros(self.cfg.num_envs)
-		episode_len = torch.zeros(self.cfg.num_envs)
-		episodes_completed = torch.zeros(self.cfg.num_envs, dtype=torch.int32)
+        # Record resume lineage in run_info.yaml (only on rank 0)
+        if self.cfg.rank == 0:
+            update_run_info_resume(self.cfg.work_dir, checkpoint_path, self._step)
+            print(
+                colored(
+                    f"Resumed from checkpoint at step {self._step}.",
+                    "blue",
+                    attrs=["bold"],
+                )
+            )
 
-		if self.cfg.save_video:
-			self.logger.video.init(self.env, enabled=self.cfg.rank==0)
+    def eval(self):
+        """Evaluate agent and aggregate all completed episodes per unique task name."""
+        task_results = defaultdict(empty_metrics)
 
-		while (episodes_completed < self.cfg.eval_episodes).any():
-			use_mpc = self._step > 0 or self.cfg.finetune
-			torch.compiler.cudagraph_mark_step_begin()
-			action = self.agent(obs, t0=episode_len==0, step=self._step, eval_mode=True, task=self._tasks, mpc=use_mpc)
-			obs, reward, terminated, truncated, info = self.env.step(action)
+        obs, info = self.env.reset()
+        episode_reward = torch.zeros(self.cfg.num_envs)
+        episode_len = torch.zeros(self.cfg.num_envs)
+        episodes_completed = torch.zeros(self.cfg.num_envs, dtype=torch.int32)
 
-			done = terminated | truncated
-			episode_reward += reward
-			episode_len += 1
+        if self.cfg.save_video:
+            self.logger.video.init(self.env, enabled=self.cfg.rank == 0)
 
-			if 'final_info' in info:
-				for i in range(self.cfg.num_envs):
-					if done[i]:
-						task_id = self._tasks[i].item()
-						task_name = self.cfg.global_tasks[task_id]
+        while (episodes_completed < self.cfg.eval_episodes).any():
+            use_mpc = self._step > 0 or self.cfg.finetune
+            torch.compiler.cudagraph_mark_step_begin()
+            action = self.agent(
+                obs,
+                t0=episode_len == 0,
+                step=self._step,
+                eval_mode=True,
+                task=self._tasks,
+                mpc=use_mpc,
+            )
+            obs, reward, terminated, truncated, info = self.env.step(action)
 
-						task_results[task_name]['reward'].append(episode_reward[i].item())
-						task_results[task_name]['length'].append(episode_len[i].item())
-						task_results[task_name]['success'].append(info['final_info']['success'][i].item())
-						task_results[task_name]['score'].append(info['final_info']['score'][i].item())
+            done = terminated | truncated
+            episode_reward += reward
+            episode_len += 1
 
-						episode_reward[i] = 0.0
-						episode_len[i] = 0.0
-						episodes_completed[i] += 1
+            if "final_info" in info:
+                for i in range(self.cfg.num_envs):
+                    if done[i]:
+                        task_id = self._tasks[i].item()
+                        task_name = self.cfg.global_tasks[task_id]
 
-			if self.cfg.save_video and episodes_completed.min() == 0:
-				self.logger.video.record(self.env)
+                        task_results[task_name]["reward"].append(
+                            episode_reward[i].item()
+                        )
+                        task_results[task_name]["length"].append(episode_len[i].item())
+                        task_results[task_name]["success"].append(
+                            info["final_info"]["success"][i].item()
+                        )
+                        task_results[task_name]["score"].append(
+                            info["final_info"]["score"][i].item()
+                        )
 
-		if self.cfg.save_video:
-			self.logger.video.save(self._step)
+                        episode_reward[i] = 0.0
+                        episode_len[i] = 0.0
+                        episodes_completed[i] += 1
 
-		barrier()  # Ensure all processes have completed evaluation
+            if self.cfg.save_video and episodes_completed.min() == 0:
+                self.logger.video.record(self.env)
 
-		if self.cfg.world_size > 1:
-			# Gather results from all ranks
-			gathered_results = [None for _ in range(self.cfg.world_size)] if self.cfg.rank == 0 else None
-			torch.distributed.gather_object(task_results, gathered_results, dst=0)
-			if self.cfg.rank == 0:
-				# Combine results from all ranks
-				for rank_results in gathered_results:
-					for task_name, metrics in rank_results.items():
-						for metric_name, values in metrics.items():
-							task_results[task_name][metric_name].extend(values)
+        if self.cfg.save_video:
+            self.logger.video.save(self._step)
 
-		results = {}
-		if self.cfg.task == 'soup' and self.cfg.rank == 0:
-			assert len(task_results) == self.cfg.num_global_tasks, \
-				f'Expected results for {self.cfg.num_global_tasks} tasks, but got {len(task_results)}.'
+        barrier()  # Ensure all processes have completed evaluation
 
-		# Sort tasks by order in cfg.global_tasks
-		task_results = OrderedDict(sorted(task_results.items(), key=lambda x: self.cfg.global_tasks.index(x[0])))
+        if self.cfg.world_size > 1:
+            # Gather results from all ranks
+            gathered_results = (
+                [None for _ in range(self.cfg.world_size)]
+                if self.cfg.rank == 0
+                else None
+            )
+            torch.distributed.gather_object(task_results, gathered_results, dst=0)
+            if self.cfg.rank == 0:
+                # Combine results from all ranks
+                for rank_results in gathered_results:
+                    for task_name, metrics in rank_results.items():
+                        for metric_name, values in metrics.items():
+                            task_results[task_name][metric_name].extend(values)
 
-		# Compute per-task averages
-		for task_name, metrics in task_results.items():
-			n = len(metrics['reward'])
-			results[f'episode_reward+{task_name}'] = sum(metrics['reward']) / n
-			results[f'episode_length+{task_name}'] = sum(metrics['length']) / n
-			results[f'episode_success+{task_name}'] = sum(metrics['success']) / n
-			results[f'episode_score+{task_name}'] = sum(metrics['score']) / n
+        results = {}
+        if self.cfg.task == "soup" and self.cfg.rank == 0:
+            assert (
+                len(task_results) == self.cfg.num_global_tasks
+            ), f"Expected results for {self.cfg.num_global_tasks} tasks, but got {len(task_results)}."
 
-		# Compute unweighted averages *across tasks*
-		num_tasks = len(task_results)
-		if self.cfg.rank == 0:
-			assert num_tasks == self.cfg.num_global_tasks, \
+        # Sort tasks by order in cfg.global_tasks
+        task_results = OrderedDict(sorted(task_results.items(), key=lambda x: self.cfg.global_tasks.index(x[0])))
+
+        # Compute per-task averages
+        for task_name, metrics in task_results.items():
+            n = len(metrics['reward'])
+            results[f'episode_reward+{task_name}'] = sum(metrics['reward']) / n
+            results[f'episode_length+{task_name}'] = sum(metrics['length']) / n
+            results[f'episode_success+{task_name}'] = sum(metrics['success']) / n
+            results[f'episode_score+{task_name}'] = sum(metrics['score']) / n
+
+        # Compute unweighted averages *across tasks*
+        num_tasks = len(task_results)
+        if self.cfg.rank == 0:
+            assert num_tasks == self.cfg.num_global_tasks, \
 				f'Number of eval tasks ({num_tasks}) does not match expected ({self.cfg.num_global_tasks})'
-		results['episode_reward'] = sum(
+        results['episode_reward'] = sum(
 			sum(m['reward']) / len(m['reward']) for m in task_results.values()
 		) / num_tasks
-		results['episode_success'] = sum(
+        results['episode_success'] = sum(
 			sum(m['success']) / len(m['success']) for m in task_results.values()
 		) / num_tasks
-		results['episode_score'] = sum(
+        results['episode_score'] = sum(
 			sum(m['score']) / len(m['score']) for m in task_results.values()
 		) / num_tasks
 
-		return results
+        return results
 
-	def to_td(self, obs, action=None, reward=None, terminated=None):
-		"""Creates a TensorDict for a new episode."""
-		if isinstance(obs, dict):
-			obs = TensorDict(obs, batch_size=(), device='cpu')
-		else:
-			obs = obs.cpu()
-		if action is None:
-			action = torch.full_like(self.env.rand_act(), float('nan'))
-		if reward is None:
-			reward = torch.tensor(float('nan')).repeat(self.cfg.num_envs)
-		if terminated is None:
-			terminated = torch.tensor(False).repeat(self.cfg.num_envs)
-		elif not isinstance(terminated, torch.Tensor):
-			terminated = torch.stack(terminated.tolist())
-		td = TensorDict(
+    def to_td(self, obs, action=None, reward=None, terminated=None):
+        """Creates a TensorDict for a new episode."""
+        if isinstance(obs, dict):
+            obs = TensorDict(obs, batch_size=(), device='cpu')
+        else:
+            obs = obs.cpu()
+        if action is None:
+            action = torch.full_like(self.env.rand_act(), float('nan'))
+        if reward is None:
+            reward = torch.tensor(float('nan')).repeat(self.cfg.num_envs)
+        if terminated is None:
+            terminated = torch.tensor(False).repeat(self.cfg.num_envs)
+        elif not isinstance(terminated, torch.Tensor):
+            terminated = torch.stack(terminated.tolist())
+        td = TensorDict(
 			obs=obs,
 			action=action,
 			reward=reward,
 			terminated=terminated,
 			task=self._tasks,
 			batch_size=(self.cfg.num_envs,))
-		return td
-	
-	def train(self):
-		"""Train a Newt agent."""
-		# Load demonstrations
-		use_demos = self.cfg.get('use_demos', False)
-		
-		# Load checkpoint (explicit or auto-resume from work_dir)
-		checkpoint = self.cfg.get('checkpoint', None)
-		resumed = False
-		
-		if checkpoint:
-			# Explicit checkpoint provided
-			if not os.path.exists(checkpoint):
-				raise FileNotFoundError(f'Checkpoint file not found: {checkpoint}')
-			self.agent.load(self.cfg.checkpoint)
-			if self.cfg.rank == 0:
-				print(colored(f'Loaded checkpoint from {self.cfg.checkpoint}.', 'blue', attrs=['bold']))
-		else:
-			# Auto-resume: find latest checkpoint in work_dir/checkpoints
-			ckpt_dir = Path(self.cfg.work_dir) / 'checkpoints'
-			if ckpt_dir.exists():
-				# Find checkpoint files (exclude trainer state files)
-				checkpoints = [p for p in ckpt_dir.glob('*.pt') if not p.stem.endswith('_trainer')]
-				if checkpoints:
-					latest_ckpt = max(checkpoints, key=parse_step)
-					self.load_checkpoint(latest_ckpt)
-					resumed = True
-			
-			if not resumed and self.cfg.rank == 0:
-				print(colored(f'No checkpoint found, training from scratch.', 'yellow', attrs=['bold']))
-		
-		# Pretrain agent on demonstrations if available (skip if resuming or explicit checkpoint)
-		if use_demos and not checkpoint and not resumed and self.cfg.demo_steps > 0:
-			if self.cfg.rank == 0:
-				print('Pretraining agent on demonstrations...')
-			self.agent.maxq_pi = False  # Disable max-Q for pretraining
-			print(f'prior_coef is {self.agent.cfg.prior_coef}, setting to 1.0 for pretraining.')
-			self.agent.cfg.prior_coef = 1.0  # Use only behavior cloning loss
-			iterator = tqdm(range(self.cfg.demo_steps), desc='Pretraining') if self.cfg.rank == 0 else range(self.cfg.demo_steps)
-			for i in iterator:
-				pretrain_metrics = self.agent.update(self.buffer)
-				if i % int(self.cfg.demo_steps / 50) == 0:
-					self.logger.pprint_pretrain(pretrain_metrics)
-			pretrain_metrics.update({
+        return td
+
+    def train(self):
+        """Train a Newt agent."""
+        # Load demonstrations
+        use_demos = self.cfg.get('use_demos', False)
+
+        # Load checkpoint (explicit or auto-resume from work_dir)
+        checkpoint = self.cfg.get('checkpoint', None)
+        resumed = False
+
+        if checkpoint:
+            # Explicit checkpoint provided
+            if not os.path.exists(checkpoint):
+                raise FileNotFoundError(f'Checkpoint file not found: {checkpoint}')
+            self.agent.load(self.cfg.checkpoint)
+            if self.cfg.rank == 0:
+                print(colored(f'Loaded checkpoint from {self.cfg.checkpoint}.', 'blue', attrs=['bold']))
+        else:
+            # Auto-resume: find latest checkpoint in work_dir/checkpoints
+            ckpt_dir = Path(self.cfg.work_dir) / 'checkpoints'
+            if ckpt_dir.exists():
+                # Find checkpoint files (exclude trainer state files)
+                checkpoints = [p for p in ckpt_dir.glob('*.pt') if not p.stem.endswith('_trainer')]
+                if checkpoints:
+                    latest_ckpt = max(checkpoints, key=parse_step)
+                    self.load_checkpoint(latest_ckpt)
+                    resumed = True
+
+            if not resumed and self.cfg.rank == 0:
+                print(colored(f'No checkpoint found, training from scratch.', 'yellow', attrs=['bold']))
+
+        # Pretrain agent on demonstrations if available (skip if resuming or explicit checkpoint)
+        if use_demos and not checkpoint and not resumed and self.cfg.demo_steps > 0:
+            if self.cfg.rank == 0:
+                print('Pretraining agent on demonstrations...')
+            self.agent.maxq_pi = False  # Disable max-Q for pretraining
+            print(f'prior_coef is {self.agent.cfg.prior_coef}, setting to 1.0 for pretraining.')
+            self.agent.cfg.prior_coef = 1.0  # Use only behavior cloning loss
+            iterator = tqdm(range(self.cfg.demo_steps), desc='Pretraining') if self.cfg.rank == 0 else range(self.cfg.demo_steps)
+            for i in iterator:
+                pretrain_metrics = self.agent.update(self.buffer)
+                if i % int(self.cfg.demo_steps / 50) == 0:
+                    self.logger.pprint_pretrain(pretrain_metrics)
+            pretrain_metrics.update({
 				'step': 0,
 				'elapsed_time': time() - self._start_time,
 			})
-			self.agent.maxq_pi = True
-			self.agent.cfg.prior_coef = self.cfg.prior_coef
-			print(f'Set prior_coef to {self.agent.cfg.prior_coef} after pretraining.')
-			if self.cfg.rank == 0:
-				print('Pretraining complete.')
-			self.logger.save_agent(self.agent, f'{self._step:,}'.replace(',', '_'))
+            self.agent.maxq_pi = True
+            self.agent.cfg.prior_coef = self.cfg.prior_coef
+            print(f'Set prior_coef to {self.agent.cfg.prior_coef} after pretraining.')
+            if self.cfg.rank == 0:
+                print('Pretraining complete.')
+            self.logger.save_agent(self.agent, f'{self._step:,}'.replace(',', '_'))
 
-		# Training loop
-		if self.cfg.rank == 0:
-			print(f'Training agent for {self.cfg.steps:,} steps...')
-		train_metrics = defaultdict(list)
-		while self._step <= self.cfg.steps:
+        # Training loop
+        if self.cfg.rank == 0:
+            print(f'Training agent for {self.cfg.steps:,} steps...')
+        train_metrics = defaultdict(list)
+        while self._step <= self.cfg.steps:
 
-			# Evaluate agent periodically
-			if self._step % self.cfg.eval_freq == 0:
-				eval_metrics = self.eval()
-				eval_metrics.update(self.common_metrics())
-				if self.cfg.task == 'soup':
-					self.logger.pprint_multitask(eval_metrics, self.cfg)
-				self.logger.log(eval_metrics, 'eval')
+            # Evaluate agent periodically
+            if self._step % self.cfg.eval_freq == 0:
+                eval_metrics = self.eval()
+                eval_metrics.update(self.common_metrics())
+                if self.cfg.task == 'soup':
+                    self.logger.pprint_multitask(eval_metrics, self.cfg)
+                self.logger.log(eval_metrics, 'eval')
 
-				# Save agent
-				if self._step % self.cfg.save_freq == 0 and self._step > 0:
-					self.logger.save_agent(self.agent, f'{self._step:,}'.replace(',', '_'))
+                # Save agent
+                if self._step % self.cfg.save_freq == 0 and self._step > 0:
+                    self.logger.save_agent(self.agent, f'{self._step:,}'.replace(',', '_'))
 
-				# Reset environment and metrics
-				obs, info = self.env.reset()
-				ep_reward = torch.zeros((self.cfg.num_envs,))
-				ep_len = torch.zeros((self.cfg.num_envs,), dtype=torch.int32)
-				done = torch.full((self.cfg.num_envs,), True, dtype=torch.bool)
-				self._next_action = None
-				self._tds[ep_len] = self.to_td(obs)
+                # Reset environment and metrics
+                obs, info = self.env.reset()
+                ep_reward = torch.zeros((self.cfg.num_envs,))
+                ep_len = torch.zeros((self.cfg.num_envs,), dtype=torch.int32)
+                done = torch.full((self.cfg.num_envs,), True, dtype=torch.bool)
+                self._next_action = None
+                self._tds[ep_len] = self.to_td(obs)
 
-			# Collect experience
-			use_mpc = self._step >= self.cfg.seeding_coef * self._update_freq
-			use_agent = self.cfg.finetune or (use_demos and self.cfg.demo_steps > 0) or use_mpc
-			if use_agent:
-				torch.compiler.cudagraph_mark_step_begin()
-				action = self.agent(obs, t0=done, step=self._step, task=self._tasks, mpc=use_mpc)
-			else:
-				action = self.env.rand_act()
+            # Collect experience
+            use_mpc = self._step >= self.cfg.seeding_coef * self._update_freq
+            use_agent = self.cfg.finetune or (use_demos and self.cfg.demo_steps > 0) or use_mpc
+            if use_agent:
+                torch.compiler.cudagraph_mark_step_begin()
+                action = self.agent(obs, t0=done, step=self._step, task=self._tasks, mpc=use_mpc)
+            else:
+                action = self.env.rand_act()
 
-			obs, reward, terminated, truncated, info = self.env.step(action)
-			assert not terminated.any(), \
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            assert not terminated.any(), \
 				f'Unexpected termination signal received.'
-			ep_reward += reward
-			ep_len += 1
-			done = terminated | truncated
-			self._step += self.cfg.num_envs * self.cfg.world_size
+            ep_reward += reward
+            ep_len += 1
+            done = terminated | truncated
+            self._step += self.cfg.num_envs * self.cfg.world_size
 
-			# Store experience
-			_obs = obs.clone()
-			if 'final_observation' in info:
-				_obs[done] = info['final_observation']
-			td = self.to_td(_obs, action, reward, terminated)
-			self._tds[ep_len] = td
-			if done.any():
-				max_ep_len = ep_len.max()
+            # Store experience
+            _obs = obs.clone()
+            if 'final_observation' in info:
+                _obs[done] = info['final_observation']
+            td = self.to_td(_obs, action, reward, terminated)
+            self._tds[ep_len] = td
+            if done.any():
+                max_ep_len = ep_len.max()
 
-				for i in range(self.cfg.num_envs):
-					if done[i]:
-						assert ep_len[i] == self._episode_lengths[i], \
+                for i in range(self.cfg.num_envs):
+                    if done[i]:
+                        assert ep_len[i] == self._episode_lengths[i], \
 							f'Episode length {ep_len[i]} does not match expected length {self._episode_lengths[i]}.'
 
-						# Add to buffer
-						_td = self._tds[:ep_len[i]+1, i].unsqueeze(0)
-						self.buffer.add(_td, self.cfg.world_size, self.cfg.rank)
+                        # Add to buffer
+                        _td = self._tds[:ep_len[i]+1, i].unsqueeze(0)
+                        self.buffer.add(_td, self.cfg.world_size, self.cfg.rank)
 
-						# Save metrics
-						train_metrics['episode_reward'].append(ep_reward[i].item())
-						train_metrics['episode_success'].append(info['final_info']['success'][i].item())
-						train_metrics['episode_score'].append(info['final_info']['score'][i].item())
-						train_metrics['episode_length'].append(ep_len[i].item())
-						train_metrics['episode_terminated'].append(terminated[i].item())
+                        # Save metrics
+                        train_metrics['episode_reward'].append(ep_reward[i].item())
+                        train_metrics['episode_success'].append(info['final_info']['success'][i].item())
+                        train_metrics['episode_score'].append(info['final_info']['score'][i].item())
+                        train_metrics['episode_length'].append(ep_len[i].item())
+                        train_metrics['episode_terminated'].append(terminated[i].item())
 
-						# Reset episode metrics
-						ep_reward[i] = 0.0
-						ep_len[i] = 0
-				
-				# Log and reset metrics if enough data is collected
-				if max_ep_len >= self.cfg.episode_length:
-					assert self._step % self._update_freq == 0, \
+                        # Reset episode metrics
+                        ep_reward[i] = 0.0
+                        ep_len[i] = 0
+
+                # Log and reset metrics if enough data is collected
+                if max_ep_len >= self.cfg.episode_length:
+                    assert self._step % self._update_freq == 0, \
 						f'Step {self._step} is not a multiple of update frequency {self._update_freq}.'
-					self._ep_idx += self._eps_per_update_freq
-					for key in ['episode_reward', 'episode_success', 'episode_score', 'episode_length', 'episode_terminated']:
-						train_metrics[key] = torch.tensor(train_metrics[key], dtype=torch.float32).nanmean().item()
-					train_metrics.update(self.common_metrics())
-					self.logger.log(train_metrics, 'train')
-					train_metrics = defaultdict(list)
-			
-			# Update agent
-			if self._step >= self.cfg.seeding_coef * self._update_freq:
-				# Use adaptive UTD if enabled, otherwise use config value
-				current_utd = self._auto_utd.utd if self._auto_utd.enabled else self.cfg.utd
-				self._update_tokens += self.cfg.num_envs * self.cfg.world_size * current_utd
-				
-				if self._update_tokens >= 1.0:
-					num_updates = int(self._update_tokens)
-					update_start = time()
-					for _ in range(num_updates):
-						_train_metrics = self.agent.update(self.buffer)
-					update_duration = time() - update_start
-					
-					# Track timing for adaptive UTD
-					if self._auto_utd.enabled:
-						self._auto_utd.set_step(self._step)
-						self._auto_utd.record_update_time(update_duration)
-						
-						# Check memory safety (early OOM warning)
-						mem_status = self._auto_utd.check_memory_safety()
-						if mem_status.get('warning') and self.cfg.rank == 0:
-							print(colored(f"[Auto-UTD] ⚠️  {mem_status['warning']}", 'yellow'))
-						
-						# Check for adjustments (prints handled in auto_utd)
-						self._auto_utd.maybe_adjust()
-						train_metrics.update(self._auto_utd.get_metrics())
-					
-					train_metrics.update(_train_metrics)
-					self._update_tokens -= num_updates
-				
-				# Track step timing for adaptive UTD
-				if self._auto_utd.enabled:
-					self._auto_utd.start_step()
-		
-		# Save auto-UTD log and print summary
-		if self._auto_utd.enabled:
-			self._auto_utd.save_log()
-			if self.cfg.rank == 0:
-				print(colored(self._auto_utd.get_summary(), 'cyan'))
-		
-		self.logger.finish()
+                    self._ep_idx += self._eps_per_update_freq
+                    for key in ['episode_reward', 'episode_success', 'episode_score', 'episode_length', 'episode_terminated']:
+                        train_metrics[key] = torch.tensor(train_metrics[key], dtype=torch.float32).nanmean().item()
+                    train_metrics.update(self.common_metrics())
+                    self.logger.log(train_metrics, 'train')
+                    train_metrics = defaultdict(list)
+
+            # Update agent
+            if self._step >= self.cfg.seeding_coef * self._update_freq:
+                # Use adaptive UTD if enabled, otherwise use config value
+                current_utd = self._auto_utd.utd if self._auto_utd.enabled else self.cfg.utd
+                self._update_tokens += self.cfg.num_envs * self.cfg.world_size * current_utd
+
+                if self._update_tokens >= 1.0:
+                    num_updates = int(self._update_tokens)
+                    update_start = time()
+                    for _ in range(num_updates):
+                        _train_metrics = self.agent.update(self.buffer)
+                    update_duration = time() - update_start
+
+                    # Track timing for adaptive UTD
+                    if self._auto_utd.enabled:
+                        self._auto_utd.set_step(self._step)
+                        self._auto_utd.record_update_time(update_duration)
+
+                        # Check memory safety (early OOM warning)
+                        mem_status = self._auto_utd.check_memory_safety()
+                        if mem_status.get('warning') and self.cfg.rank == 0:
+                            print(colored(f"[Auto-UTD] ⚠️  {mem_status['warning']}", 'yellow'))
+
+                        # Check for adjustments (prints handled in auto_utd)
+                        self._auto_utd.maybe_adjust()
+                        train_metrics.update(self._auto_utd.get_metrics())
+
+                    train_metrics.update(_train_metrics)
+                    self._update_tokens -= num_updates
+
+                # Track step timing for adaptive UTD
+                if self._auto_utd.enabled:
+                    self._auto_utd.start_step()
+
+        # Save auto-UTD log and print summary
+        if self._auto_utd.enabled:
+            self._auto_utd.save_log()
+            if self.cfg.rank == 0:
+                print(colored(self._auto_utd.get_summary(), 'cyan'))
+
+        self.logger.finish()
