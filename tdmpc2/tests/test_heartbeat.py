@@ -242,6 +242,7 @@ class TestHeartbeatWriter(TestCase):
     
     def test_lsf_job_id_from_env(self):
         """Test LSF job ID is read from environment."""
+        old_jobid = os.environ.get("LSB_JOBID")
         os.environ["LSB_JOBID"] = "12345"
         try:
             writer = HeartbeatWriter(
@@ -259,7 +260,10 @@ class TestHeartbeatWriter(TestCase):
             
             self.assertEqual(data["job"]["job_id"], "12345")
         finally:
-            del os.environ["LSB_JOBID"]
+            if old_jobid is None:
+                os.environ.pop("LSB_JOBID", None)
+            else:
+                os.environ["LSB_JOBID"] = old_jobid
     
     def test_periodic_updates(self):
         """Test that periodic updates occur and update timestamp."""

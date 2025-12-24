@@ -68,6 +68,9 @@ class Trainer():
 			seed=cfg.seed,
 			enabled=(cfg.rank == 0),
 		)
+		# Start immediately so the heartbeat file appears even if we block later
+		# (e.g., on a distributed barrier before the training loop begins).
+		self._heartbeat.start()
 		
 		if cfg.rank == 0:
 			print('Architecture:', self.agent.model)

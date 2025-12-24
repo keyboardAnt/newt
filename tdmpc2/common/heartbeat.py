@@ -225,6 +225,8 @@ class HeartbeatWriter:
         Args:
             step: Current training step (must be non-decreasing)
         """
+        if not self.enabled:
+            return
         with self._lock:
             # Ensure step is non-decreasing
             if step >= self._step:
@@ -237,6 +239,8 @@ class HeartbeatWriter:
             step: Checkpoint step
             path: Optional checkpoint file path
         """
+        if not self.enabled:
+            return
         with self._lock:
             self._checkpoint_step = step
             self._checkpoint_path = path
@@ -247,6 +251,8 @@ class HeartbeatWriter:
         Args:
             status: Status string ('running', 'stopping', etc.)
         """
+        if not self.enabled:
+            return
         with self._lock:
             self._status = status
     
