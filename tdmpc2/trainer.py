@@ -279,9 +279,11 @@ class Trainer():
             # Explicit checkpoint provided
             if not os.path.exists(checkpoint):
                 raise FileNotFoundError(f'Checkpoint file not found: {checkpoint}')
-            self.agent.load(self.cfg.checkpoint)
+            # Use unified checkpoint loading to ensure resume lineage is recorded
+            self.load_checkpoint(checkpoint)
+            resumed = True
             if self.cfg.rank == 0:
-                print(colored(f'Loaded checkpoint from {self.cfg.checkpoint}.', 'blue', attrs=['bold']))
+                print(colored(f'Loaded checkpoint from {checkpoint}.', 'blue', attrs=['bold']))
         else:
             # Auto-resume: find latest checkpoint in work_dir/checkpoints
             ckpt_dir = Path(self.cfg.work_dir) / 'checkpoints'
