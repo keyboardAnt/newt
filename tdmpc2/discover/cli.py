@@ -257,14 +257,16 @@ def cmd_tasks(args) -> int:
         print("=" * 80)
         print(f"{'ALL TASKS':^80}")
         print("=" * 80)
-        print(f"{'Task':<45} {'Progress':>10} {'Max Step':>12} {'Runs':>6} {'Status':>8}")
+        print(f"{'Task':<45} {'Progress':>10} {'Max Step':>12} {'Runs':>6} {'Status':>15}")
         print("-" * 80)
         
         status_emoji = {'completed': '🟢', 'running': '🔵', 'stalled': '🟠', 'not_started': '🔴'}
         for _, row in best.iterrows():
             step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
             emoji = status_emoji.get(row['category'], '')
-            print(f"   {row['task']:<42} {row['progress_pct']:>8.1f}% {step_str:>12} {int(row['running_runs']):>6} {emoji:>8}")
+            status_text = row['category'].replace('_', ' ')
+            status_display = f"{emoji} {status_text}"
+            print(f"   {row['task']:<42} {row['progress_pct']:>8.1f}% {step_str:>12} {int(row['running_runs']):>6} {status_display:>15}")
         
         print("-" * 80)
         print(f"Total: {len(best)} tasks")
