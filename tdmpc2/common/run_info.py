@@ -5,11 +5,12 @@ This module centralizes all writes to run_info.yaml so that the "contract"
 (what fields exist, how they're updated) is easy to audit in one place.
 """
 from pathlib import Path
+from typing import Optional, Union
 
 import yaml
 
 
-def extract_parent_run_id(checkpoint_path: Path) -> str | None:
+def extract_parent_run_id(checkpoint_path: Path) -> Optional[str]:
     """
     Extract parent_run_id from a checkpoint path.
 
@@ -35,9 +36,9 @@ def extract_parent_run_id(checkpoint_path: Path) -> str | None:
 
 def update_run_info_resume(
     work_dir: Path,
-    loaded_checkpoint: Path | str,
+    loaded_checkpoint: Union[Path, str],
     loaded_step: int,
-    parent_run_id: str | None = None,
+    parent_run_id: Optional[str] = None,
 ) -> None:
     """
     Update run_info.yaml with resume lineage after loading a checkpoint.
