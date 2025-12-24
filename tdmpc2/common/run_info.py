@@ -72,5 +72,6 @@ def update_run_info_resume(
 
     info['loaded_checkpoint'] = str(loaded_checkpoint)
     info['loaded_step'] = loaded_step
-    info['parent_run_id'] = parent_run_id
+    if parent_run_id is not None:
+        info['parent_run_id'] = parent_run_id
     run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
