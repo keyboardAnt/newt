@@ -145,8 +145,8 @@ class HeartbeatWriter:
             if self._checkpoint_path is not None:
                 payload["checkpoint"]["path"] = self._checkpoint_path
         
-        if self._status:
-            payload["status"] = self._status
+        # Status is always included (initialized to 'running')
+        payload["status"] = self._status
         
         return payload
     
@@ -168,8 +168,9 @@ class HeartbeatWriter:
             # Atomic rename
             os.replace(self._tmp_path, self._heartbeat_path)
             
-        except Exception:
-            # Silently ignore write failures (non-critical for training)
+        except (OSError, IOError):
+            # Silently ignore filesystem errors (non-critical for training)
+            # Common cases: full disk, permission issues, network filesystem hiccups
             pass
     
     def _schedule_next(self) -> None:

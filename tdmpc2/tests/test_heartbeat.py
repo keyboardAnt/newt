@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest import TestCase
 import importlib.util
 
-# Import the heartbeat module directly to avoid torch dependencies in common/__init__.py
+# Import the heartbeat module directly to avoid triggering heavy dependencies
+# (torch, numpy, etc.) that are imported via common/__init__.py.
+# The heartbeat module itself has no external dependencies beyond stdlib.
 spec = importlib.util.spec_from_file_location(
     "heartbeat", 
     Path(__file__).parent.parent / "common" / "heartbeat.py"
