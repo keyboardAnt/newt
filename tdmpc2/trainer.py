@@ -345,7 +345,9 @@ class Trainer():
 			done = terminated | truncated
 			self._step += self.cfg.num_envs * self.cfg.world_size
 			
-			# Update heartbeat with current step
+			# Update heartbeat with current step.
+			# Note: this only updates in-memory state; the heartbeat file is written
+			# periodically according to HeartbeatWriter's configured interval.
 			self._heartbeat.update_step(self._step)
 
 			# Store experience
