@@ -84,19 +84,19 @@ def write_run_info(cfg, work_dir: Path):
 
 
 def update_run_info(work_dir: Path, status: str, final_step: int = None, error: str = None):
-	"""Update run_info.yaml with final status. Called on completion, crash, or interruption."""
-	run_info_path = Path(work_dir) / 'run_info.yaml'
-	if not run_info_path.exists():
-		return
-	
-	info = yaml.safe_load(run_info_path.read_text())
-	info['status'] = status
-	info['finished_at'] = datetime.now().isoformat()
-	if final_step is not None:
-		info['final_step'] = final_step
-	if error:
-		info['error'] = error[:500]  # Truncate long errors
-	run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
+    """Update run_info.yaml with final status. Called on completion, crash, or interruption."""
+    run_info_path = Path(work_dir) / 'run_info.yaml'
+    if not run_info_path.exists():
+        return
+
+    info = yaml.safe_load(run_info_path.read_text())
+    info['status'] = status
+    info['finished_at'] = datetime.now().isoformat()
+    if final_step is not None:
+        info['final_step'] = final_step
+    if error:
+        info['error'] = error[:500]  # Truncate long errors
+    run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
 
 
 class DDPWrapper(nn.Module):
