@@ -99,6 +99,32 @@ def update_run_info(work_dir: Path, status: str, final_step: int = None, error: 
 	run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
 
 
+def update_run_info_resume(work_dir: Path, loaded_checkpoint: str, loaded_step: int, parent_run_id: str = None):
+	"""
+	Update run_info.yaml with resume lineage after loading a checkpoint.
+	
+	This records the provenance of resumed runs, enabling:
+	- Tracking which checkpoint was used to resume
+	- Building lineage chains across multiple resumes
+	- Distinguishing fresh runs from resumed ones
+	
+	Args:
+		work_dir: Path to the run's working directory
+		loaded_checkpoint: Path to the checkpoint file that was loaded
+		loaded_step: Training step from which the run resumed
+		parent_run_id: The run_id of the parent run (extracted from checkpoint path)
+	"""
+	run_info_path = Path(work_dir) / 'run_info.yaml'
+	if not run_info_path.exists():
+		return
+	
+	info = yaml.safe_load(run_info_path.read_text())
+	info['loaded_checkpoint'] = str(loaded_checkpoint)
+	info['loaded_step'] = loaded_step
+	info['parent_run_id'] = parent_run_id
+	run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
+
+
 class DDPWrapper(nn.Module):
 	def __init__(self, module: nn.Module):
 		super().__init__()

@@ -4,6 +4,7 @@ from pathlib import Path
 from time import time
 
 import torch
+import yaml
 import numpy as np
 from termcolor import colored
 from tqdm import tqdm
@@ -116,8 +117,44 @@ class Trainer():
 			self._step = parse_step(checkpoint_path)
 			self._ep_idx = 0
 		
+		# Record resume lineage in run_info.yaml (only on rank 0)
 		if self.cfg.rank == 0:
+			self._update_run_info_resume(checkpoint_path, self._step)
 			print(colored(f'Resumed from checkpoint at step {self._step}.', 'blue', attrs=['bold']))
+
+	def _update_run_info_resume(self, loaded_checkpoint: Path, loaded_step: int):
+		"""
+		Update run_info.yaml with resume lineage after loading a checkpoint.
+		
+		This records the provenance of resumed runs, enabling:
+		- Tracking which checkpoint was used to resume
+		- Building lineage chains across multiple resumes
+		- Distinguishing fresh runs from resumed ones
+		
+		Args:
+			loaded_checkpoint: Path to the checkpoint file that was loaded
+			loaded_step: Training step from which the run resumed
+		"""
+		run_info_path = Path(self.cfg.work_dir) / 'run_info.yaml'
+		if not run_info_path.exists():
+			return
+		
+		# Extract parent_run_id from checkpoint path
+		# Checkpoint paths look like: logs/{run_id}/checkpoints/{step}.pt
+		# The run_id is the directory name containing 'checkpoints'
+		parent_run_id = None
+		try:
+			ckpt_parent = loaded_checkpoint.resolve().parent
+			if ckpt_parent.name == 'checkpoints':
+				parent_run_id = ckpt_parent.parent.name
+		except Exception:
+			pass  # If extraction fails, leave as None
+		
+		info = yaml.safe_load(run_info_path.read_text())
+		info['loaded_checkpoint'] = str(loaded_checkpoint)
+		info['loaded_step'] = loaded_step
+		info['parent_run_id'] = parent_run_id
+		run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
 
 	def eval(self):
 		"""Evaluate agent and aggregate all completed episodes per unique task name."""
