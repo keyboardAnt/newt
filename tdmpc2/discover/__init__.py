@@ -19,7 +19,7 @@ from tasks import load_task_list, task_to_index, index_to_task
 # Low-level discovery
 from .runs import discover_local_logs, discover_wandb_runs
 from .cache import RunsCache, load_all_runs
-from .analysis import best_step_by_task, attach_max_step, attach_runtime, parse_step
+from .analysis import best_step_by_task, attach_max_step, attach_runtime, parse_step, build_task_progress
 from .plots import (
     training_overview, plot_max_steps, tasks_needing_attention, progress_by_domain,
     running_runs_summary, tasks_needing_restart, currently_running_tasks,
@@ -52,6 +52,7 @@ __all__ = [
     'best_step_by_task',
     'attach_max_step',
     'attach_runtime',
+    'build_task_progress',
     # plots
     'training_overview',
     'plot_max_steps',

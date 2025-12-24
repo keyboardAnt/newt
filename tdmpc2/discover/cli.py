@@ -66,9 +66,8 @@ def cmd_refresh(args) -> int:
 
 def cmd_status(args) -> int:
     """Show training progress summary."""
-    pd = require_pandas()
     from .api import load_df
-    from .analysis import attach_max_step, best_step_by_task
+    from .analysis import build_task_progress
     
     df = load_df(
         refresh=args.refresh,
@@ -77,55 +76,33 @@ def cmd_status(args) -> int:
         wandb_project=args.wandb_project,
     )
     
-    if df.empty:
-        print("No runs found.")
-        return 1
-    
-    # Filter to official tasks only (unless --all)
-    if not getattr(args, 'show_all', False):
-        official_tasks = set(load_task_list())
-        df = df[df['task'].isin(official_tasks)]
-    
-    df_with_step = attach_max_step(df)
-    best = best_step_by_task(df)
-    
-    steps = best['max_step'].fillna(0)
-    n_tasks = len(steps)
-    tasks = best['task'].tolist()
     target = args.target_step
+    show_all = getattr(args, 'show_all', False)
     
-    # Determine which tasks have active runs (wandb-verified)
-    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(True, index=df_with_step.index)
-    running_mask = (df_with_step['status'] == 'running') & has_wandb
-    tasks_with_running = set(df_with_step[running_mask]['task'].unique())
+    # Use shared helper aligned to official task list
+    # If --all, pass task_list=None and include_unknown=True to show everything
+    if show_all:
+        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
+    else:
+        progress = build_task_progress(df, target_step=target)
     
-    # Categorize tasks
-    completed_mask = steps >= target
-    not_started_mask = steps == 0
-    in_progress_mask = (steps > 0) & (steps < target)
+    n_tasks = len(progress)
+    steps = progress['max_step']
     
-    running_tasks = []
-    stalled_tasks = []
-    for task, is_in_progress in zip(tasks, in_progress_mask):
-        if is_in_progress:
-            if task in tasks_with_running:
-                running_tasks.append(task)
-            else:
-                stalled_tasks.append(task)
-    
-    completed = completed_mask.sum()
-    running = len(running_tasks)
-    stalled = len(stalled_tasks)
-    not_started = not_started_mask.sum()
+    # Count by category
+    completed = (progress['category'] == 'completed').sum()
+    running = (progress['category'] == 'running').sum()
+    stalled = (progress['category'] == 'stalled').sum()
+    not_started = (progress['category'] == 'not_started').sum()
     
     pct_complete = 100 * completed / n_tasks
-    avg_progress = 100 * steps.mean() / target
-    median_progress = 100 * steps.median() / target
+    avg_progress = progress['progress_pct'].mean()
+    median_progress = progress['progress_pct'].median()
     
     print("=" * 60)
     print(f"{'TRAINING PROGRESS SUMMARY':^60}")
     print("=" * 60)
-    print(f"  Total tasks:         {n_tasks:>6}")
+    print(f"  Total tasks:         {n_tasks:>6}  (from tasks.json)")
     print(f"  Target step:         {target:>6,}")
     print("-" * 60)
     print(f"  🟢 Completed:        {completed:>6} ({pct_complete:.1f}%)")
@@ -138,6 +115,15 @@ def cmd_status(args) -> int:
     print(f"  Min steps:           {int(steps.min()):>6,}")
     print(f"  Max steps:           {int(steps.max()):>6,}")
     print("=" * 60)
+    
+    # Warn about unknown tasks if any (only when not using --all; print full list)
+    if not show_all:
+        n_unknown = progress.attrs.get('n_unknown', 0)
+        if n_unknown > 0:
+            unknown = progress.attrs.get('unknown_tasks', [])
+            print(f"\n  ⚠️  {n_unknown} unknown tasks in runs:")
+            for t in unknown:
+                print(f"     - {t}")
     
     return 0
 
@@ -276,9 +262,8 @@ def cmd_tasks(args) -> int:
 
 def cmd_domains(args) -> int:
     """Show progress by domain."""
-    pd = require_pandas()
     from .api import load_df
-    from .analysis import best_step_by_task
+    from .analysis import build_task_progress
     
     df = load_df(
         refresh=args.refresh,
@@ -287,17 +272,15 @@ def cmd_domains(args) -> int:
         wandb_project=args.wandb_project,
     )
     
-    if df.empty:
-        print("No runs found.")
-        return 1
-    
-    # Filter to official tasks only (unless --all)
-    if not getattr(args, 'show_all', False):
-        official_tasks = set(load_task_list())
-        df = df[df['task'].isin(official_tasks)]
-    
     target = args.target_step
-    best = best_step_by_task(df)
+    show_all = getattr(args, 'show_all', False)
+    
+    # Use shared helper aligned to tasks.json, so domains include not-started tasks.
+    # With --all, also include unknown tasks seen in runs.
+    if show_all:
+        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
+    else:
+        progress = build_task_progress(df, target_step=target)
     
     def get_domain(task: str) -> str:
         for sep in ['-', '_']:
@@ -305,12 +288,11 @@ def cmd_domains(args) -> int:
                 return task.split(sep)[0]
         return task
     
-    best_copy = best.copy()
-    best_copy['domain'] = best_copy['task'].apply(get_domain)
-    best_copy['progress_pct'] = (100 * best_copy['max_step'].fillna(0) / target).clip(upper=100)
-    best_copy['is_complete'] = best_copy['max_step'] >= target
+    progress_copy = progress.copy()
+    progress_copy['domain'] = progress_copy['task'].apply(get_domain)
+    progress_copy['is_complete'] = progress_copy['max_step'] >= target
     
-    domain_stats = best_copy.groupby('domain').agg({
+    domain_stats = progress_copy.groupby('domain').agg({
         'task': 'count',
         'max_step': 'mean',
         'progress_pct': 'mean',
@@ -339,6 +321,14 @@ def cmd_domains(args) -> int:
             print(f"{idx:<20} {int(row['n_tasks']):>8} {int(row['n_complete']):>10} "
                   f"{row['avg_progress']:>13.1f}% {row['completion_rate']:>13.1f}%")
         print("-" * 80)
+        
+        if not show_all:
+            n_unknown = progress.attrs.get('n_unknown', 0)
+            if n_unknown > 0:
+                unknown = progress.attrs.get('unknown_tasks', [])
+                print(f"\n⚠️  {n_unknown} unknown tasks in runs:")
+                for t in unknown:
+                    print(f"  - {t}")
     
     return 0
 

@@ -67,60 +67,34 @@ def plot_max_steps(df: "pd.DataFrame", target_step: Optional[int] = None) -> Non
 def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     """Generate overview statistics and visualizations for training progress.
     
+    Uses the official task list from tasks.json as source of truth.
+    Tasks with no runs are counted as "not started".
+    
     Shows 4 categories:
     - Completed: reached target_step
     - Running: incomplete but has active runs in wandb
     - Stalled: incomplete, has progress, but no active runs (needs restart)
-    - Not Started: 0 steps
+    - Not Started: 0 steps (including tasks with no runs)
     """
     pd = require_pandas()
     import matplotlib.pyplot as plt
-    from .analysis import attach_max_step
+    from .analysis import build_task_progress
     
-    if df.empty:
-        print('No runs found.')
-        return
+    # Use shared helper aligned to official task list
+    progress = build_task_progress(df, target_step=target_step)
     
-    df_with_step = attach_max_step(df)
+    n_tasks = len(progress)
+    steps = progress['max_step']
     
-    # Get best step per task
-    best = best_step_by_task(df)
-    if best.empty:
-        print('No runs found.')
-        return
-    
-    steps = best['max_step'].fillna(0)
-    n_tasks = len(steps)
-    tasks = best['task'].tolist()
-    
-    # Determine which tasks have active runs (wandb-verified)
-    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(True, index=df_with_step.index)
-    running_mask = (df_with_step['status'] == 'running') & has_wandb
-    tasks_with_running = set(df_with_step[running_mask]['task'].unique())
-    
-    # Categorize tasks
-    completed_mask = steps >= target_step
-    not_started_mask = steps == 0
-    in_progress_mask = (steps > 0) & (steps < target_step)
-    
-    # Split in_progress into running vs stalled
-    running_tasks = []
-    stalled_tasks = []
-    for task, is_in_progress in zip(tasks, in_progress_mask):
-        if is_in_progress:
-            if task in tasks_with_running:
-                running_tasks.append(task)
-            else:
-                stalled_tasks.append(task)
-    
-    completed = completed_mask.sum()
-    running = len(running_tasks)
-    stalled = len(stalled_tasks)
-    not_started = not_started_mask.sum()
+    # Count by category
+    completed = (progress['category'] == 'completed').sum()
+    running = (progress['category'] == 'running').sum()
+    stalled = (progress['category'] == 'stalled').sum()
+    not_started = (progress['category'] == 'not_started').sum()
     
     pct_complete = 100 * completed / n_tasks
-    avg_progress = 100 * steps.mean() / target_step
-    median_progress = 100 * steps.median() / target_step
+    avg_progress = progress['progress_pct'].mean()
+    median_progress = progress['progress_pct'].median()
     
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     
@@ -141,8 +115,7 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     
     # Cumulative progress
     ax2 = axes[1]
-    progress_pct = (100 * steps / target_step).clip(upper=100)
-    sorted_progress = progress_pct.sort_values().reset_index(drop=True)
+    sorted_progress = progress['progress_pct'].sort_values().reset_index(drop=True)
     ax2.fill_between(range(len(sorted_progress)), sorted_progress, alpha=0.3, color='steelblue')
     ax2.plot(sorted_progress.values, color='steelblue', linewidth=2)
     ax2.axhline(y=100, color='green', linestyle='--', linewidth=2, label='100% (Target)')
@@ -158,7 +131,7 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     print("=" * 60)
     print(f"{'TRAINING PROGRESS SUMMARY':^60}")
     print("=" * 60)
-    print(f"  Total tasks:         {n_tasks:>6}")
+    print(f"  Total tasks:         {n_tasks:>6}  (from tasks.json)")
     print(f"  Target step:         {target_step:>6,}")
     print("-" * 60)
     print(f"  🟢 ✅ Completed:      {completed:>6} ({pct_complete:.1f}%)")
@@ -171,6 +144,14 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     print(f"  Min steps:           {int(steps.min()):>6,}")
     print(f"  Max steps:           {int(steps.max()):>6,}")
     print("=" * 60)
+    
+    # Warn about unknown tasks if any (print full list)
+    n_unknown = progress.attrs.get('n_unknown', 0)
+    if n_unknown > 0:
+        unknown = progress.attrs.get('unknown_tasks', [])
+        print(f"\n  ⚠️  {n_unknown} unknown tasks in runs (not in tasks.json):")
+        for t in unknown:
+            print(f"     - {t}")
 
 
 def tasks_needing_attention(df: "pd.DataFrame", target_step: int = 5_000_000, bottom_n: int = 20) -> None:
@@ -223,14 +204,16 @@ def tasks_needing_attention(df: "pd.DataFrame", target_step: int = 5_000_000, bo
 
 
 def progress_by_domain(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
-    """Group tasks by domain prefix and show aggregate progress."""
+    """Group tasks by domain prefix and show aggregate progress.
+    
+    Uses tasks.json as the source of truth for task list (via build_task_progress),
+    so domains include not-started tasks and exclude unknown tasks by default.
+    """
     pd = require_pandas()
     import matplotlib.pyplot as plt
+    from .analysis import build_task_progress
     
-    best = best_step_by_task(df)
-    if best.empty:
-        print('No runs found.')
-        return
+    progress = build_task_progress(df, target_step=target_step)
     
     def get_domain(task: str) -> str:
         for sep in ['-', '_']:
@@ -238,12 +221,11 @@ def progress_by_domain(df: "pd.DataFrame", target_step: int = 5_000_000) -> None
                 return task.split(sep)[0]
         return task
     
-    best_copy = best.copy()
-    best_copy['domain'] = best_copy['task'].apply(get_domain)
-    best_copy['progress_pct'] = (100 * best_copy['max_step'].fillna(0) / target_step).clip(upper=100)
-    best_copy['is_complete'] = best_copy['max_step'] >= target_step
+    progress_copy = progress.copy()
+    progress_copy['domain'] = progress_copy['task'].apply(get_domain)
+    progress_copy['is_complete'] = progress_copy['max_step'] >= target_step
     
-    domain_stats = best_copy.groupby('domain').agg({
+    domain_stats = progress_copy.groupby('domain').agg({
         'task': 'count',
         'max_step': 'mean',
         'progress_pct': 'mean',
@@ -289,6 +271,14 @@ def progress_by_domain(df: "pd.DataFrame", target_step: int = 5_000_000) -> None
         print(f"{idx:<20} {int(row['n_tasks']):>8} {int(row['n_complete']):>10} "
               f"{row['avg_progress']:>13.1f}% {row['completion_rate']:>13.1f}%")
     print("-" * 80)
+    
+    # Warn about unknown tasks excluded from tasks.json alignment (print full list)
+    n_unknown = progress.attrs.get('n_unknown', 0)
+    if n_unknown > 0:
+        unknown = progress.attrs.get('unknown_tasks', [])
+        print(f"\n⚠️  {n_unknown} unknown tasks in runs (not in tasks.json):")
+        for t in unknown:
+            print(f"  - {t}")
 
 
 def running_runs_summary(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
