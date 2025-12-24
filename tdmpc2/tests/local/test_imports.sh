@@ -3,7 +3,7 @@
 # Usage: make test-sanity (from repo root, inside Docker container)
 #    or: bsub -q short-gpu -gpu num=1 -W 0:10 -app nvidia-gpu \
 #          -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \
-#          -o test.log -e test.log tdmpc2/tests/test_imports.sh
+#          -o test.log -e test.log tdmpc2/tests/local/test_imports.sh
 
 set -e
 cd /home/projects/dharel/nadavt/repos/newt/tdmpc2

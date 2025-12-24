@@ -13,6 +13,7 @@ from discover import parse_step
 
 from common import barrier
 from common.auto_utd import AdaptiveUTD
+from common.heartbeat import HeartbeatWriter
 from common.run_info import update_run_info_resume
 
 
@@ -59,6 +60,18 @@ class Trainer():
 			rank=cfg.rank,
 		)
 
+        # Heartbeat writer for runctl liveness tracking (rank 0 only)
+        self._heartbeat = HeartbeatWriter(
+            work_dir=cfg.work_dir,
+            run_id=cfg.run_id,
+            kind='train',
+            task=cfg.task,
+            seed=cfg.seed,
+            enabled=(cfg.rank == 0),
+        )
+        # Start immediately so the heartbeat file appears even if we block later
+        self._heartbeat.start()
+
         if cfg.rank == 0:
             print('Architecture:', self.agent.model)
             print(f'Update frequency: {self._update_freq:,}')
@@ -96,6 +109,11 @@ class Trainer():
                 checkpoint_data["auto_utd"] = self._auto_utd.get_effective_config()
                 self._auto_utd.save_log()  # Also save detailed log
             torch.save(checkpoint_data, state_path)
+
+            # Update heartbeat with checkpoint info (use agent checkpoint path)
+            agent_ckpt_path = Path(self.logger._model_dir) / f'{identifier}.pt'
+            self._heartbeat.update_checkpoint(self._step, str(agent_ckpt_path))
+
             if self.cfg.rank == 0:
                 print(
                     colored(
@@ -268,6 +286,18 @@ class Trainer():
 
     def train(self):
         """Train a Newt agent."""
+        try:
+            self._train_body()
+        finally:
+            # Always stop heartbeat, even on error/exception
+            self._heartbeat.update_status("stopping")
+            self._heartbeat.write_now()
+            self._heartbeat.stop()
+            # Ensure logger is finalized regardless of success or failure
+            self.logger.finish()
+
+    def _train_body(self):
+        """Training loop body (separated for heartbeat try/finally wrapper)."""
         # Load demonstrations
         use_demos = self.cfg.get('use_demos', False)
 
@@ -364,6 +394,9 @@ class Trainer():
             done = terminated | truncated
             self._step += self.cfg.num_envs * self.cfg.world_size
 
+            # Update heartbeat with current step
+            self._heartbeat.update_step(self._step)
+
             # Store experience
             _obs = obs.clone()
             if 'final_observation' in info:
@@ -443,5 +476,3 @@ class Trainer():
             self._auto_utd.save_log()
             if self.cfg.rank == 0:
                 print(colored(self._auto_utd.get_summary(), 'cyan'))
-
-        self.logger.finish()

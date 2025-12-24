@@ -4,7 +4,8 @@ TDMPC2 := $(ROOT)/tdmpc2
 
 .PHONY: help interactive interactive-nonexclusive submit-expert test-sanity \
         status running tasks restart domains \
-        gen-eval submit-eval videos-collect videos-prune videos-prune-dry refresh
+        gen-eval submit-eval videos-collect videos-prune videos-prune-dry refresh \
+        test-heartbeat test-heartbeat-lsf
 
 help:
 	@echo "=== Observability ==="
@@ -31,7 +32,9 @@ help:
 	@echo "  interactive-nonexclusive Launch interactive GPU session (shared mode, for ManiSkill)"
 	@echo ""
 	@echo "=== Development ==="
-	@echo "  test-sanity     Run basic import tests"
+	@echo "  test-sanity        Run basic import tests"
+	@echo "  test-heartbeat     Run heartbeat unit tests"
+	@echo "  test-heartbeat-lsf Submit heartbeat e2e test to LSF cluster"
 
 # === Observability ===
 
@@ -89,4 +92,10 @@ interactive-nonexclusive:
 # === Development ===
 
 test-sanity:
-	@cd $(TDMPC2) && ./tests/test_imports.sh
+	@cd $(TDMPC2) && ./tests/local/test_imports.sh
+
+test-heartbeat:
+	@cd $(TDMPC2) && $(PYTHON) -m unittest tests.local.test_heartbeat -v
+
+test-heartbeat-lsf:
+	@cd $(TDMPC2) && bsub < jobs/test_heartbeat_e2e.lsf

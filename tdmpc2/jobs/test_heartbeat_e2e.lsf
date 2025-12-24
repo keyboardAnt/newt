@@ -1,0 +1,88 @@
+#!/bin/bash
+#BSUB -J heartbeat_e2e_test
+#BSUB -q short-gpu
+#BSUB -n 1
+#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -app nvidia-gpu
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1"
+#BSUB -R "rusage[mem=16000]"
+#BSUB -W 0:30
+#BSUB -o logs/heartbeat_e2e_%J.out
+#BSUB -e logs/heartbeat_e2e_%J.err
+
+# =============================================================================
+# Heartbeat E2E Test for LSF Cluster
+# =============================================================================
+#
+# This job validates the heartbeat contract from issue #5:
+# - heartbeat.json appears within 60s
+# - Atomic writes (no partial JSON)
+# - Updates every ~30s
+# - progress.step increases during training
+# - Required schema fields present
+# - job.job_id matches $LSB_JOBID
+#
+# Usage:
+#   bsub < jobs/test_heartbeat_e2e.lsf
+#
+# Or with overrides:
+#   bsub -J "hb_test_custom" -W 1:00 < jobs/test_heartbeat_e2e.lsf
+#
+# =============================================================================
+
+set -euo pipefail
+
+echo "=============================================="
+echo "Heartbeat E2E Test"
+echo "=============================================="
+echo "LSB_JOBID: ${LSB_JOBID:-not_set}"
+echo "Hostname: $(hostname)"
+echo "Date: $(date -Iseconds)"
+echo "Working dir: $(pwd)"
+echo "=============================================="
+
+# Navigate to tdmpc2 directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TDMPC2_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$TDMPC2_DIR"
+echo "Changed to: $(pwd)"
+
+# Ensure logs directory exists for output files
+mkdir -p logs
+
+# Configuration
+TASK="${HEARTBEAT_TEST_TASK:-pendulum-swingup}"
+STEPS="${HEARTBEAT_TEST_STEPS:-50000}"
+SEED="${HEARTBEAT_TEST_SEED:-42}"
+TIMEOUT="${HEARTBEAT_TEST_TIMEOUT:-300}"
+
+echo ""
+echo "Test configuration:"
+echo "  TASK: $TASK"
+echo "  STEPS: $STEPS"
+echo "  SEED: $SEED"
+echo "  TIMEOUT: ${TIMEOUT}s"
+echo ""
+
+# Run the full e2e test
+python tests/cluster/lsf/test_heartbeat_lsf_e2e.py \
+    --full-test \
+    --logs-dir "$(pwd)/logs" \
+    --task "$TASK" \
+    --steps "$STEPS" \
+    --seed "$SEED" \
+    --timeout "$TIMEOUT"
+
+EXIT_CODE=$?
+
+echo ""
+echo "=============================================="
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "HEARTBEAT E2E TEST: PASSED"
+else
+    echo "HEARTBEAT E2E TEST: FAILED (exit code $EXIT_CODE)"
+fi
+echo "=============================================="
+
+exit $EXIT_CODE
+

@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feature/runctl]
+  pull_request:
+    branches: [main, feature/runctl]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run heartbeat unit tests
+        run: |
+          cd tdmpc2
+          python -m unittest tests.local.test_heartbeat -v
+
+  watcher-validation:
+    name: Heartbeat Watcher Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Test watcher script imports and CLI
+        run: |
+          cd tdmpc2
+          python tests/cluster/lsf/test_heartbeat_lsf_e2e.py --help
+
+      - name: Test watcher validation logic
+        run: |
+          cd tdmpc2
+          python -c "
+          import tempfile
+          import json
+          import time
+          from pathlib import Path
+          from datetime import datetime, timezone
+          from tests.cluster.lsf.test_heartbeat_lsf_e2e import HeartbeatWatcher, REQUIRED_FIELDS
+
+          print('=== Test 1: Schema validation ===')
+          with tempfile.TemporaryDirectory() as tmpdir:
+              logs_dir = Path(tmpdir)
+              run_id = 'test_run'
+              run_dir = logs_dir / run_id
+              run_dir.mkdir(parents=True)
+              hb_path = run_dir / 'heartbeat.json'
+              
+              hb = {
+                  'schema_version': 1,
+                  'timestamp': datetime.now(timezone.utc).isoformat(),
+                  'run_id': run_id,
+                  'kind': 'train',
+                  'task': 'test-task',
+                  'work_hash': 'abc123',
+                  'progress': {'step': 0},
+                  'job': {'scheduler': 'lsf', 'job_id': ''},
+                  'host': {'hostname': 'testhost', 'pid': 12345},
+                  'status': 'running',
+              }
+              with open(hb_path, 'w') as f:
+                  json.dump(hb, f)
+              
+              watcher = HeartbeatWatcher(logs_dir=logs_dir, run_id=run_id, verbose=False)
+              assert watcher.wait_for_file(timeout=1.0), 'File should be found'
+              data = watcher.read_heartbeat()
+              assert data is not None, 'Should read heartbeat'
+              errors = watcher.validate_schema(data)
+              assert len(errors) == 0, f'Schema errors: {errors}'
+              print('✓ Schema validation works')
+
+          print()
+          print('=== Test 2: Failure detection ===')
+          with tempfile.TemporaryDirectory() as tmpdir:
+              logs_dir = Path(tmpdir)
+              run_id = 'empty_run'
+              (logs_dir / run_id).mkdir(parents=True)
+              
+              watcher = HeartbeatWatcher(logs_dir=logs_dir, run_id=run_id, verbose=False)
+              found = watcher.wait_for_file(timeout=0.5)
+              assert not found, 'File should not be found'
+              failures = watcher.validate_contract()
+              assert any('never appeared' in f for f in failures), 'Should detect missing file'
+              print('✓ Failure detection works')
+
+          print()
+          print('=== Test 3: Step monotonicity check ===')
+          watcher = HeartbeatWatcher(logs_dir=Path('/tmp'), run_id='test', verbose=False)
+          watcher.steps = [0, 100, 200, 150, 300]  # 150 < 200 is a violation
+          watcher.first_seen_at = 0.5
+          watcher.heartbeats = [{'status': 'stopping'}]
+          watcher.timestamps = [datetime.now(timezone.utc)] * 5
+          failures = watcher.validate_contract()
+          assert any('decreased' in f for f in failures), f'Should detect step decrease: {failures}'
+          print('✓ Step monotonicity check works')
+
+          print()
+          print('All watcher validation tests passed!')
+          "
+
