@@ -32,6 +32,21 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 
+def parse_timestamp(ts: str) -> datetime:
+    """Parse an ISO-8601 timestamp, handling both Z and +00:00 UTC formats.
+    
+    Args:
+        ts: Timestamp string (e.g., "2025-12-24T01:52:23.114Z" or with +00:00)
+    
+    Returns:
+        datetime object (timezone-aware)
+    """
+    # Normalize Z suffix to +00:00 for fromisoformat compatibility
+    if ts.endswith("Z"):
+        ts = ts[:-1] + "+00:00"
+    return datetime.fromisoformat(ts)
+
+
 # Contract thresholds from issue #5
 FILE_APPEAR_TIMEOUT = 60.0  # seconds
 HEARTBEAT_INTERVAL = 30.0  # expected interval
@@ -207,9 +222,9 @@ class HeartbeatWatcher:
             if data is not None:
                 self.heartbeats.append(data)
 
-                # Parse timestamp
+                # Parse timestamp (handles both Z and +00:00 formats)
                 try:
-                    ts = datetime.fromisoformat(data["timestamp"])
+                    ts = parse_timestamp(data["timestamp"])
                     self.timestamps.append(ts)
                 except (KeyError, ValueError):
                     pass

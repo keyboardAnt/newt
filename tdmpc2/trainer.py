@@ -116,7 +116,9 @@ class Trainer():
 				raise
 			
 			# Update heartbeat with checkpoint info only after successful save
-			self._heartbeat.update_checkpoint(self._step, str(state_path))
+			# Use the primary agent checkpoint path (not trainer state) for consumers
+			agent_ckpt_path = Path(self.logger._model_dir) / f'{identifier}.pt'
+			self._heartbeat.update_checkpoint(self._step, str(agent_ckpt_path))
 			
 			if self.cfg.rank == 0:
 				print(colored(f'Saved checkpoint at step {self._step}.', 'green', attrs=['bold']))
@@ -266,8 +268,8 @@ class Trainer():
 			self._heartbeat.update_status("stopping")
 			self._heartbeat.write_now()
 			self._heartbeat.stop()
-		
-		self.logger.finish()
+			# Ensure logger is finalized (e.g., W&B) regardless of success or failure
+			self.logger.finish()
 	
 	def _train_inner(self):
 		"""Inner training loop (wrapped by train() for heartbeat lifecycle)."""

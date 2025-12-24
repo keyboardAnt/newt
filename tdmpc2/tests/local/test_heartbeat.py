@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from unittest import TestCase
+from unittest import TestCase, skipIf
 import importlib.util
 
 # Import the heartbeat module directly to avoid triggering heavy dependencies
@@ -21,6 +21,7 @@ heartbeat = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(heartbeat)
 HeartbeatWriter = heartbeat.HeartbeatWriter
 compute_work_hash = heartbeat.compute_work_hash
+parse_timestamp = heartbeat.parse_timestamp
 
 
 class TestComputeWorkHash(TestCase):
@@ -60,6 +61,30 @@ class TestComputeWorkHash(TestCase):
         """Hash is 16 characters (64-bit, reduced collision risk)."""
         h = compute_work_hash("train", "walker-walk", 42)
         self.assertEqual(len(h), 16)
+
+
+class TestParseTimestamp(TestCase):
+    """Tests for parse_timestamp function."""
+    
+    def test_parse_z_suffix(self):
+        """Parse timestamp with Z suffix."""
+        ts = parse_timestamp("2025-12-24T01:52:23.114000Z")
+        self.assertEqual(ts.year, 2025)
+        self.assertEqual(ts.month, 12)
+        self.assertEqual(ts.day, 24)
+        self.assertEqual(ts.hour, 1)
+        self.assertEqual(ts.minute, 52)
+    
+    def test_parse_plus_offset(self):
+        """Parse timestamp with +00:00 offset."""
+        ts = parse_timestamp("2025-12-24T01:52:23.114000+00:00")
+        self.assertEqual(ts.year, 2025)
+        self.assertEqual(ts.month, 12)
+    
+    def test_parse_no_microseconds(self):
+        """Parse timestamp without microseconds."""
+        ts = parse_timestamp("2025-12-24T01:52:23Z")
+        self.assertEqual(ts.second, 23)
 
 
 class TestHeartbeatWriter(TestCase):
@@ -105,6 +130,29 @@ class TestHeartbeatWriter(TestCase):
         self.assertEqual(data["job"]["scheduler"], "lsf")
         self.assertIn("hostname", data["host"])
         self.assertIn("pid", data["host"])
+    
+    def test_timestamp_format(self):
+        """Test timestamp uses Z suffix for UTC."""
+        writer = HeartbeatWriter(
+            work_dir=self.temp_dir,
+            run_id="test-run",
+            kind="train",
+            task="walker-walk",
+            enabled=True,
+        )
+        
+        writer.write_now()
+        
+        with open(Path(self.temp_dir) / "heartbeat.json") as f:
+            data = json.load(f)
+        
+        # Timestamp should end with Z
+        self.assertTrue(data["timestamp"].endswith("Z"), 
+                       f"Expected Z suffix, got: {data['timestamp']}")
+        
+        # Should be parseable
+        ts = parse_timestamp(data["timestamp"])
+        self.assertIsNotNone(ts.tzinfo)
     
     def test_update_step(self):
         """Test step updates are reflected in heartbeat."""
@@ -280,7 +328,7 @@ class TestHeartbeatWriter(TestCase):
             # Read initial heartbeat
             with open(hb_path) as f:
                 data1 = json.load(f)
-            ts1 = datetime.fromisoformat(data1["timestamp"])
+            ts1 = parse_timestamp(data1["timestamp"])
             
             # Update step
             writer.update_step(500)
@@ -291,12 +339,53 @@ class TestHeartbeatWriter(TestCase):
             # Read again
             with open(hb_path) as f:
                 data2 = json.load(f)
-            ts2 = datetime.fromisoformat(data2["timestamp"])
+            ts2 = parse_timestamp(data2["timestamp"])
             
             # Timestamp should have advanced
             self.assertGreater(ts2, ts1)
             # Step should be updated
             self.assertEqual(data2["progress"]["step"], 500)
+    
+    def test_periodic_updates_multiple(self):
+        """Test multiple periodic updates with cadence validation."""
+        hb_path = Path(self.temp_dir) / "heartbeat.json"
+        timestamps = []
+        steps = []
+        interval = 0.05  # 50ms
+        
+        with HeartbeatWriter(
+            work_dir=self.temp_dir,
+            run_id="test-run",
+            kind="train",
+            task="walker-walk",
+            interval=interval,
+            enabled=True,
+        ) as writer:
+            # Collect multiple heartbeat samples
+            for i in range(6):
+                time.sleep(interval * 0.8)  # Slightly less than interval
+                writer.update_step(i * 100)
+                
+                with open(hb_path) as f:
+                    data = json.load(f)
+                timestamps.append(parse_timestamp(data["timestamp"]))
+                steps.append(data["progress"]["step"])
+        
+        # Should have collected samples
+        self.assertGreaterEqual(len(timestamps), 3)
+        
+        # Timestamps should be non-decreasing
+        for i in range(1, len(timestamps)):
+            self.assertGreaterEqual(timestamps[i], timestamps[i-1])
+        
+        # At least some timestamps should be distinct (periodic updates happened)
+        unique_timestamps = len(set(str(t) for t in timestamps))
+        self.assertGreaterEqual(unique_timestamps, 2, 
+                               "Expected at least 2 distinct timestamps from periodic updates")
+        
+        # Steps should be non-decreasing
+        for i in range(1, len(steps)):
+            self.assertGreaterEqual(steps[i], steps[i-1])
     
     def test_concurrent_updates(self):
         """Test thread-safety of concurrent updates while writer is running."""
@@ -366,6 +455,65 @@ class TestHeartbeatWriter(TestCase):
         # job_id should be empty string (documented behavior)
         self.assertEqual(data["job"]["job_id"], "")
         self.assertEqual(data["job"]["scheduler"], "lsf")
+    
+    def test_stop_idempotent(self):
+        """Test that stop() can be called multiple times safely."""
+        writer = HeartbeatWriter(
+            work_dir=self.temp_dir,
+            run_id="test-run",
+            kind="train",
+            task="walker-walk",
+            enabled=True,
+        )
+        
+        writer.start()
+        time.sleep(0.05)
+        
+        # Multiple stops should be safe
+        writer.stop()
+        writer.stop()
+        writer.stop()
+        
+        # File should still exist
+        hb_path = Path(self.temp_dir) / "heartbeat.json"
+        self.assertTrue(hb_path.exists())
+
+
+class TestIntegrationImport(TestCase):
+    """Test that the module can be imported via the production path.
+    
+    This catches import errors that might occur in the real environment
+    but are hidden by the importlib.util approach used for lightweight testing.
+    """
+    
+    @skipIf(
+        not (Path(__file__).parent.parent.parent / "common" / "__init__.py").exists(),
+        "common package not available"
+    )
+    def test_production_import(self):
+        """Test importing via production path (requires heavy deps)."""
+        import sys
+        
+        # Add tdmpc2 to path if not already there
+        tdmpc2_path = str(Path(__file__).parent.parent.parent)
+        if tdmpc2_path not in sys.path:
+            sys.path.insert(0, tdmpc2_path)
+        
+        try:
+            # Try the production import
+            from common.heartbeat import HeartbeatWriter as ProdWriter
+            from common.heartbeat import compute_work_hash as prod_hash
+            from common.heartbeat import parse_timestamp as prod_parse
+            
+            # Basic sanity checks
+            self.assertIsNotNone(ProdWriter)
+            self.assertEqual(prod_hash("train", "test"), compute_work_hash("train", "test"))
+            
+        except ImportError as e:
+            # If heavy deps (torch, etc.) aren't available, skip gracefully
+            if "torch" in str(e) or "numpy" in str(e):
+                self.skipTest(f"Skipping production import test: {e}")
+            raise
 
 
 if __name__ == "__main__":
