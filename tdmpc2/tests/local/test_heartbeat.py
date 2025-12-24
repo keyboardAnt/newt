@@ -15,7 +15,7 @@ import importlib.util
 # The heartbeat module itself has no external dependencies beyond stdlib.
 spec = importlib.util.spec_from_file_location(
     "heartbeat", 
-    Path(__file__).parent.parent / "common" / "heartbeat.py"
+    Path(__file__).parent.parent.parent / "common" / "heartbeat.py"
 )
 heartbeat = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(heartbeat)

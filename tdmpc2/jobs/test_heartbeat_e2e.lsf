@@ -63,7 +63,7 @@ echo "  TIMEOUT: ${TIMEOUT}s"
 echo ""
 
 # Run the full e2e test
-python tests/test_heartbeat_e2e.py \
+python tests/cluster/lsf/test_heartbeat_lsf_e2e.py \
     --full-test \
     --logs-dir "$(pwd)/logs" \
     --task "$TASK" \

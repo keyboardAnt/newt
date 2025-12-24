@@ -92,10 +92,10 @@ interactive-nonexclusive:
 # === Development ===
 
 test-sanity:
-	@cd $(TDMPC2) && ./tests/test_imports.sh
+	@cd $(TDMPC2) && ./tests/local/test_imports.sh
 
 test-heartbeat:
-	@cd $(TDMPC2) && $(PYTHON) -m unittest tests.test_heartbeat -v
+	@cd $(TDMPC2) && $(PYTHON) -m unittest tests.local.test_heartbeat -v
 
 test-heartbeat-lsf:
 	@cd $(TDMPC2) && bsub < jobs/test_heartbeat_e2e.lsf
