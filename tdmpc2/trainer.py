@@ -251,7 +251,18 @@ class Trainer():
 		# Start heartbeat writer for runctl liveness tracking
 		self._heartbeat.start()
 		
-		# Load demonstrations
+		try:
+			self._train_inner()
+		finally:
+			# Always stop heartbeat, even on error/exception
+			self._heartbeat.update_status("stopping")
+			self._heartbeat.write_now()
+			self._heartbeat.stop()
+		
+		self.logger.finish()
+	
+	def _train_inner(self):
+		"""Inner training loop (wrapped by train() for heartbeat lifecycle)."""
 		use_demos = self.cfg.get('use_demos', False)
 		
 		# Load checkpoint (explicit or auto-resume from work_dir)
@@ -429,8 +440,3 @@ class Trainer():
 			self._auto_utd.save_log()
 			if self.cfg.rank == 0:
 				print(colored(self._auto_utd.get_summary(), 'cyan'))
-		
-		# Stop heartbeat writer
-		self._heartbeat.stop()
-		
-		self.logger.finish()

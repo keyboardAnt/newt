@@ -24,13 +24,15 @@ def compute_work_hash(kind: str, task: str, seed: Optional[int] = None) -> str:
         seed: Optional seed value
     
     Returns:
-        A short hash string for identity matching
+        A 16-character hex hash string for identity matching (64-bit).
+        This provides sufficient collision resistance for typical job counts
+        while remaining human-readable.
     """
     components = [kind, task]
     if seed is not None:
         components.append(str(seed))
     data = ":".join(components)
-    return hashlib.sha256(data.encode()).hexdigest()[:12]
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
 class HeartbeatWriter:
@@ -38,6 +40,9 @@ class HeartbeatWriter:
     
     Updates heartbeat.json every `interval` seconds with run metadata and progress.
     Uses atomic write (temp file + os.replace) to prevent partial reads.
+    
+    Uses a dedicated background thread with Event-based waiting for clean shutdown,
+    avoiding the complexity and race conditions of chained Timer objects.
     
     Schema v1 required fields:
         - schema_version: 1
@@ -48,7 +53,7 @@ class HeartbeatWriter:
         - work_hash: Stable job identity for deduplication
         - progress.step: Current training step (non-decreasing)
         - job.scheduler: 'lsf'
-        - job.job_id: LSF job ID
+        - job.job_id: LSF job ID (empty string "" if not running under LSF)
         - host.hostname: Machine hostname
         - host.pid: Process ID
     
@@ -99,21 +104,22 @@ class HeartbeatWriter:
         # Host and job metadata (computed once)
         self._hostname = socket.gethostname()
         self._pid = os.getpid()
+        # LSB_JOBID is the LSF batch job ID; empty string means not running under LSF
         self._job_id = os.environ.get("LSB_JOBID", "")
         
-        # Progress tracking
+        # Progress tracking (protected by _lock)
         self._step = 0
         self._checkpoint_step: Optional[int] = None
         self._checkpoint_path: Optional[str] = None
         self._status = "running"
         
-        # Timer for periodic updates
-        self._timer: Optional[threading.Timer] = None
+        # Threading: use Event-based thread instead of chained Timers
         self._lock = threading.Lock()
-        self._stopped = False
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
     
-    def _build_payload(self) -> dict:
-        """Build the heartbeat JSON payload."""
+    def _snapshot_payload(self) -> dict:
+        """Build the heartbeat JSON payload. Must be called with _lock held."""
         payload = {
             "schema_version": self.SCHEMA_VERSION,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -150,16 +156,18 @@ class HeartbeatWriter:
         
         return payload
     
-    def _write_atomic(self) -> None:
-        """Write heartbeat file atomically using temp + rename."""
+    def _write_atomic(self, payload: dict) -> None:
+        """Write heartbeat file atomically using temp + rename.
+        
+        Args:
+            payload: Pre-built payload dict to write (snapshot taken under lock)
+        """
         if not self.enabled:
             return
         
         try:
             # Ensure directory exists
             self.work_dir.mkdir(parents=True, exist_ok=True)
-            
-            payload = self._build_payload()
             
             # Write to temp file
             with open(self._tmp_path, "w") as f:
@@ -173,22 +181,16 @@ class HeartbeatWriter:
             # Common cases: full disk, permission issues, network filesystem hiccups
             pass
     
-    def _schedule_next(self) -> None:
-        """Schedule the next heartbeat write."""
-        if self._stopped or not self.enabled:
-            return
-        
-        self._timer = threading.Timer(self.interval, self._tick)
-        self._timer.daemon = True
-        self._timer.start()
-    
-    def _tick(self) -> None:
-        """Timer callback: write heartbeat and schedule next."""
+    def _write_once(self) -> None:
+        """Take snapshot under lock, then write atomically."""
         with self._lock:
-            if self._stopped:
-                return
-            self._write_atomic()
-            self._schedule_next()
+            payload = self._snapshot_payload()
+        self._write_atomic(payload)
+    
+    def _run_loop(self) -> None:
+        """Background thread: write heartbeat periodically until stopped."""
+        while not self._stop_event.wait(timeout=self.interval):
+            self._write_once()
     
     def start(self) -> None:
         """Start the periodic heartbeat writer."""
@@ -196,20 +198,26 @@ class HeartbeatWriter:
             return
         
         with self._lock:
-            if self._stopped:
-                return
-            # Write initial heartbeat immediately
-            self._write_atomic()
-            # Schedule periodic updates
-            self._schedule_next()
+            if self._thread is not None:
+                return  # Already started
+            self._stop_event.clear()
+        
+        # Write initial heartbeat immediately
+        self._write_once()
+        
+        # Start background thread for periodic updates
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
     
     def stop(self) -> None:
         """Stop the periodic heartbeat writer."""
+        self._stop_event.set()
+        thread = None
         with self._lock:
-            self._stopped = True
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
+            thread = self._thread
+            self._thread = None
+        if thread is not None:
+            thread.join(timeout=2.0)  # Don't block forever
     
     def update_step(self, step: int) -> None:
         """Update the current training step.
@@ -244,8 +252,7 @@ class HeartbeatWriter:
     
     def write_now(self) -> None:
         """Write heartbeat immediately (useful before shutdown)."""
-        with self._lock:
-            self._write_atomic()
+        self._write_once()
     
     def __enter__(self) -> "HeartbeatWriter":
         """Context manager entry: start the heartbeat writer."""

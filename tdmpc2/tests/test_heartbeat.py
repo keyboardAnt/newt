@@ -2,9 +2,10 @@
 
 import json
 import os
-import sys
 import tempfile
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from unittest import TestCase
 import importlib.util
@@ -56,9 +57,9 @@ class TestComputeWorkHash(TestCase):
         self.assertEqual(h1, h2)
     
     def test_hash_length(self):
-        """Hash is 12 characters (short hash)."""
+        """Hash is 16 characters (64-bit, reduced collision risk)."""
         h = compute_work_hash("train", "walker-walk", 42)
-        self.assertEqual(len(h), 12)
+        self.assertEqual(len(h), 16)
 
 
 class TestHeartbeatWriter(TestCase):
@@ -259,8 +260,110 @@ class TestHeartbeatWriter(TestCase):
             self.assertEqual(data["job"]["job_id"], "12345")
         finally:
             del os.environ["LSB_JOBID"]
+    
+    def test_periodic_updates(self):
+        """Test that periodic updates occur and update timestamp."""
+        hb_path = Path(self.temp_dir) / "heartbeat.json"
+        
+        with HeartbeatWriter(
+            work_dir=self.temp_dir,
+            run_id="test-run",
+            kind="train",
+            task="walker-walk",
+            interval=0.05,  # 50ms interval for fast testing
+            enabled=True,
+        ) as writer:
+            # Read initial heartbeat
+            with open(hb_path) as f:
+                data1 = json.load(f)
+            ts1 = datetime.fromisoformat(data1["timestamp"])
+            
+            # Update step
+            writer.update_step(500)
+            
+            # Wait for at least 2 intervals
+            time.sleep(0.15)
+            
+            # Read again
+            with open(hb_path) as f:
+                data2 = json.load(f)
+            ts2 = datetime.fromisoformat(data2["timestamp"])
+            
+            # Timestamp should have advanced
+            self.assertGreater(ts2, ts1)
+            # Step should be updated
+            self.assertEqual(data2["progress"]["step"], 500)
+    
+    def test_concurrent_updates(self):
+        """Test thread-safety of concurrent updates while writer is running."""
+        hb_path = Path(self.temp_dir) / "heartbeat.json"
+        errors = []
+        
+        def updater(writer, n):
+            """Thread that rapidly updates state."""
+            try:
+                for i in range(100):
+                    writer.update_step(n * 1000 + i)
+                    writer.update_checkpoint(n * 1000 + i, f"/ckpt/{n}/{i}.pt")
+                    writer.update_status("running" if i % 2 == 0 else "busy")
+            except Exception as e:
+                errors.append(e)
+        
+        with HeartbeatWriter(
+            work_dir=self.temp_dir,
+            run_id="test-run",
+            kind="train",
+            task="walker-walk",
+            interval=0.02,  # 20ms interval
+            enabled=True,
+        ) as writer:
+            # Start multiple updater threads
+            threads = [threading.Thread(target=updater, args=(writer, i)) for i in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            
+            # Let a few more writes happen
+            time.sleep(0.1)
+        
+        # No errors should have occurred
+        self.assertEqual(errors, [])
+        
+        # File should be valid JSON with expected structure
+        with open(hb_path) as f:
+            data = json.load(f)
+        
+        # Basic structure checks
+        self.assertIsInstance(data["progress"]["step"], int)
+        self.assertGreaterEqual(data["progress"]["step"], 0)
+        self.assertIn(data["status"], ["running", "busy", "stopping"])
+        if "checkpoint" in data:
+            self.assertIsInstance(data["checkpoint"]["step"], int)
+    
+    def test_job_id_empty_when_not_lsf(self):
+        """Test job_id is empty string when LSB_JOBID not set."""
+        # Ensure LSB_JOBID is not set
+        os.environ.pop("LSB_JOBID", None)
+        
+        writer = HeartbeatWriter(
+            work_dir=self.temp_dir,
+            run_id="test-run",
+            kind="train",
+            task="walker-walk",
+            enabled=True,
+        )
+        
+        writer.write_now()
+        
+        with open(Path(self.temp_dir) / "heartbeat.json") as f:
+            data = json.load(f)
+        
+        # job_id should be empty string (documented behavior)
+        self.assertEqual(data["job"]["job_id"], "")
+        self.assertEqual(data["job"]["scheduler"], "lsf")
 
 
 if __name__ == "__main__":
-    import unittest
-    unittest.main()
+    from unittest import main
+    main()
