@@ -26,8 +26,10 @@ def extract_parent_run_id(checkpoint_path: Path) -> str | None:
         ckpt_parent = checkpoint_path.resolve().parent
         if ckpt_parent.name == 'checkpoints':
             return ckpt_parent.parent.name
-    except Exception:
-        pass
+    except OSError:
+        # If the path cannot be resolved (e.g. missing file, permission error),
+        # treat it as "no parent run id".
+        return None
     return None
 
 
