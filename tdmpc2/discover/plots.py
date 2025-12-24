@@ -284,57 +284,71 @@ def progress_by_domain(df: "pd.DataFrame", target_step: int = 5_000_000) -> None
 def running_runs_summary(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
     """Show summary of currently running runs by task.
     
-    Only counts runs as "running" if confirmed by wandb (found_in == 'wandb' or 'both').
-    Local-only runs with status='running' are unreliable (stale after crashes).
+    Liveness sources:
+    - Wandb-verified: status == 'running' and found_in in {'wandb', 'both'}
+    - Heartbeat-verified (runctl): run_dir/heartbeat.json is fresh (<=120s)
+    
+    We treat a task as "active" if it has either wandb running OR a fresh heartbeat.
     
     Returns a DataFrame with columns: task, running_runs, max_step, progress_pct, needs_attention
     where needs_attention indicates tasks that are incomplete but have no running runs.
     """
     pd = require_pandas()
-    from .analysis import attach_max_step
+    from .analysis import attach_max_step, attach_heartbeat_liveness, build_task_progress
+    
+    # Build official per-task table aligned to tasks.json (includes tasks with no runs)
+    progress = build_task_progress(df, target_step=target_step)
+    
+    # Run-level data (for heartbeat + stale local diagnostics)
+    df_with_step = attach_max_step(df) if not df.empty else df
+    df_with_step = attach_heartbeat_liveness(df_with_step) if not df.empty else df_with_step
     
     if df.empty:
-        print('No runs found.')
-        return pd.DataFrame()
-    
-    df_with_step = attach_max_step(df)
-    
-    # Only trust "running" status from wandb (not local-only runs with stale status)
-    # found_in can be: 'local', 'wandb', or 'both'
-    has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else True
-    running_mask = (df_with_step['status'] == 'running') & has_wandb
-    
-    # Also count local-only "running" for diagnostics (these are likely stale)
-    local_only_running_mask = (df_with_step['status'] == 'running') & (df_with_step['found_in'] == 'local') if 'found_in' in df_with_step.columns else pd.Series(False, index=df_with_step.index)
-    
-    # Count confirmed running runs per task (wandb-verified)
-    running_counts = df_with_step[running_mask].groupby('task').size().rename('running_runs')
-    
-    # Count stale local-only "running" for warning
-    stale_local_counts = df_with_step[local_only_running_mask].groupby('task').size().rename('stale_local_running')
-    
-    # Get best step per task
-    best_step = df_with_step.groupby('task')['max_step'].max().fillna(0)
-    
-    # Combine into summary
-    summary = pd.DataFrame({
-        'running_runs': running_counts,
-        'stale_local_running': stale_local_counts,
-        'max_step': best_step,
-    }).fillna({'running_runs': 0, 'stale_local_running': 0})
-    summary['running_runs'] = summary['running_runs'].astype(int)
-    summary['stale_local_running'] = summary['stale_local_running'].astype(int)
-    summary['progress_pct'] = (100 * summary['max_step'] / target_step).clip(upper=100).round(1)
-    summary['is_complete'] = summary['max_step'] >= target_step
-    summary['needs_restart'] = (~summary['is_complete']) & (summary['running_runs'] == 0)
-    summary['has_duplicates'] = summary['running_runs'] > 1
-    
-    summary = summary.reset_index().sort_values(['needs_restart', 'progress_pct'], ascending=[False, True])
+        # No runs at all: all tasks are not started and thus "need restart" in the sense of "need start"
+        summary = progress[['task', 'max_step', 'progress_pct', 'running_runs']].copy()
+        summary['heartbeat_alive_runs'] = 0
+        summary['stale_local_running'] = 0
+        summary['is_complete'] = False
+        summary['is_active'] = False
+        summary['needs_restart'] = True
+        summary['has_duplicates'] = False
+        summary = summary.sort_values(['needs_restart', 'progress_pct'], ascending=[False, True]).reset_index(drop=True)
+    else:
+        # Wandb-verified running (run-level counts; build_task_progress already uses wandb-verified running too)
+        has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(False, index=df_with_step.index)
+        running_mask = (df_with_step['status'] == 'running') & has_wandb
+        running_counts = df_with_step[running_mask].groupby('task').size().rename('running_runs')
+        
+        # Fresh heartbeat runs per task (runctl liveness)
+        heartbeat_alive_mask = df_with_step['heartbeat_alive'] if 'heartbeat_alive' in df_with_step.columns else pd.Series(False, index=df_with_step.index)
+        heartbeat_counts = df_with_step[heartbeat_alive_mask].groupby('task').size().rename('heartbeat_alive_runs')
+        
+        # Stale local-only "running" for warning
+        local_only_running_mask = (df_with_step['status'] == 'running') & (df_with_step['found_in'] == 'local') if 'found_in' in df_with_step.columns else pd.Series(False, index=df_with_step.index)
+        stale_local_counts = df_with_step[local_only_running_mask].groupby('task').size().rename('stale_local_running')
+        
+        # Combine into a task-aligned summary (tasks.json source of truth)
+        summary = progress[['task', 'max_step', 'progress_pct', 'running_runs']].copy()
+        
+        # Prefer running_runs from build_task_progress, but if it's missing, fall back to run-level counts
+        if 'running_runs' not in summary.columns:
+            summary['running_runs'] = summary['task'].map(running_counts).fillna(0).astype(int)
+        
+        summary['heartbeat_alive_runs'] = summary['task'].map(heartbeat_counts).fillna(0).astype(int)
+        summary['stale_local_running'] = summary['task'].map(stale_local_counts).fillna(0).astype(int)
+        
+        summary['is_complete'] = summary['max_step'] >= target_step
+        summary['is_active'] = (summary['running_runs'] > 0) | (summary['heartbeat_alive_runs'] > 0)
+        summary['needs_restart'] = (~summary['is_complete']) & (~summary['is_active'])
+        summary['has_duplicates'] = summary['running_runs'] > 1
+        
+        summary = summary.sort_values(['needs_restart', 'progress_pct'], ascending=[False, True]).reset_index(drop=True)
     
     # Print summary
     total_running = summary['running_runs'].sum()
+    total_hb = summary['heartbeat_alive_runs'].sum()
     total_stale = summary['stale_local_running'].sum()
-    tasks_with_running = (summary['running_runs'] > 0).sum()
+    tasks_with_running = (summary['is_active']).sum()
     tasks_needing_restart = summary['needs_restart'].sum()
     tasks_with_duplicates = summary['has_duplicates'].sum()
     
@@ -342,10 +356,11 @@ def running_runs_summary(df: "pd.DataFrame", target_step: int = 5_000_000) -> "p
     print(f"{'RUNNING RUNS SUMMARY':^70}")
     print("=" * 70)
     print(f"  Running runs (wandb):      {total_running:>6}  ✓ confirmed by wandb")
+    print(f"  Alive heartbeats (runctl): {total_hb:>6}  ✓ fresh heartbeat.json (≤120s)")
     if total_stale > 0:
         print(f"  Stale local 'running':     {total_stale:>6}  ⚠️  (local-only, likely crashed)")
     print(f"  Tasks with running runs:   {tasks_with_running:>6}")
-    print(f"  Tasks needing restart:     {tasks_needing_restart:>6}  ⚠️  (incomplete, no active run)")
+    print(f"  Tasks needing restart:     {tasks_needing_restart:>6}  ⚠️  (incomplete, no wandb run AND no fresh heartbeat)")
     print(f"  Tasks with stale runs:     {tasks_with_duplicates:>6}  🔄 (>1 wandb run, from resume)")
     print("=" * 70)
     
@@ -355,7 +370,13 @@ def running_runs_summary(df: "pd.DataFrame", target_step: int = 5_000_000) -> "p
 def tasks_needing_restart(df: "pd.DataFrame", target_step: int = 5_000_000, show_top_n: int = None) -> "pd.DataFrame":
     """Show tasks that are incomplete but have no running runs - these need to be restarted.
     
-    Uses wandb-verified running status. Tasks shown here have no active runs in wandb.
+    Uses wandb + heartbeat-verified liveness. Tasks shown here have:
+    - max_step < target_step
+    - no active run in wandb
+    - no fresh runctl heartbeat (heartbeat.json)
+    
+    Note: This also includes tasks that have not started yet (max_step == 0 / no runs),
+    since those tasks also have no active signals and require starting.
     
     Returns DataFrame of tasks needing restart, sorted by progress (highest first, to prioritize
     tasks that are closest to completion).
@@ -371,18 +392,20 @@ def tasks_needing_restart(df: "pd.DataFrame", target_step: int = 5_000_000, show
     needing = needing.sort_values('progress_pct', ascending=False)
     
     if needing.empty:
-        print("\n✅ All incomplete tasks have active running runs (per wandb)!")
+        print("\n✅ All incomplete tasks have an active run (wandb or fresh heartbeat)!")
         return needing
     
-    print(f"\n⚠️  TASKS NEEDING RESTART ({len(needing)} tasks, no active runs in wandb):")
+    print(f"\n⚠️  TASKS NEEDING RESTART ({len(needing)} tasks, no active wandb run and no fresh heartbeat):")
     print("-" * 70)
-    print(f"{'Task':<40} {'Progress':>12} {'Max Step':>15}")
+    print(f"{'Task':<40} {'Progress':>12} {'Max Step':>15} {'HB':>6} {'Wandb':>6}")
     print("-" * 70)
     
     display_df = needing.head(show_top_n) if show_top_n else needing
     for _, row in display_df.iterrows():
         step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
-        print(f"   {row['task']:<37} {row['progress_pct']:>10.1f}% {step_str:>15}")
+        hb = int(row.get('heartbeat_alive_runs', 0)) if 'heartbeat_alive_runs' in row else 0
+        wb = int(row.get('running_runs', 0)) if 'running_runs' in row else 0
+        print(f"   {row['task']:<37} {row['progress_pct']:>10.1f}% {step_str:>15} {hb:>6} {wb:>6}")
     
     if show_top_n and len(needing) > show_top_n:
         print(f"   ... and {len(needing) - show_top_n} more tasks")
@@ -539,8 +562,9 @@ duplicate_run_details = stale_run_details
 def currently_running_tasks(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
     """Show all tasks that have at least one running run, with progress info.
     
-    Only counts wandb-verified running runs. Note: wandb "running" may include
-    LSF-suspended jobs (SSUSP) since they haven't cleanly exited.
+    Counts tasks as active if they have:
+    - wandb-verified running run, OR
+    - fresh runctl heartbeat (heartbeat.json)
     
     Returns DataFrame with task, running_runs, progress info.
     """
@@ -550,25 +574,27 @@ def currently_running_tasks(df: "pd.DataFrame", target_step: int = 5_000_000) ->
     if summary.empty:
         return summary
     
-    # Filter to tasks with running runs
-    running = summary[summary['running_runs'] > 0].copy()
+    # Filter to tasks with any active signal
+    running = summary[summary.get('is_active', False)].copy()
     running = running.sort_values('progress_pct', ascending=True)
     
     if running.empty:
-        print("\n❌ No tasks currently have running runs (wandb-verified)!")
+        print("\n❌ No tasks currently have active runs (wandb or fresh heartbeat)!")
         return running
     
     total_runs = running['running_runs'].sum()
-    print(f"\n🏃 CURRENTLY RUNNING TASKS ({len(running)} tasks, {total_runs} runs per wandb):")
-    print("   Note: wandb 'running' may include LSF-suspended jobs (SSUSP)")
+    total_hb = running['heartbeat_alive_runs'].sum() if 'heartbeat_alive_runs' in running.columns else 0
+    print(f"\n🏃 CURRENTLY RUNNING TASKS ({len(running)} tasks):")
+    print(f"   wandb running runs: {int(total_runs)} | alive heartbeats: {int(total_hb)}")
     print("-" * 70)
-    print(f"{'Task':<40} {'Runs':>6} {'Progress':>12} {'Max Step':>12}")
+    print(f"{'Task':<40} {'Wandb':>6} {'HB':>6} {'Progress':>12} {'Max Step':>12}")
     print("-" * 70)
     
     for _, row in running.iterrows():
         step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
         stale_marker = " 🔄" if row['has_duplicates'] else ""  # Multiple wandb runs from resume
-        print(f"   {row['task']:<37} {int(row['running_runs']):>6} {row['progress_pct']:>10.1f}% {step_str:>12}{stale_marker}")
+        hb = int(row.get('heartbeat_alive_runs', 0))
+        print(f"   {row['task']:<37} {int(row['running_runs']):>6} {hb:>6} {row['progress_pct']:>10.1f}% {step_str:>12}{stale_marker}")
     
     print("-" * 70)
     

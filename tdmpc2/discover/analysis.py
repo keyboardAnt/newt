@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
@@ -63,6 +65,76 @@ def attach_max_step(df: "pd.DataFrame") -> "pd.DataFrame":
 
     out['max_step'] = out.apply(_get_step, axis=1)
     out['max_step'] = pd.to_numeric(out['max_step'], errors='coerce')
+    return out
+
+
+def _read_heartbeat_timestamp(run_dir: Path) -> Optional[datetime]:
+    """Read heartbeat.json timestamp from a run directory.
+    
+    Returns:
+        timezone-aware datetime in UTC, or None if missing/unreadable.
+    """
+    hb_path = run_dir / "heartbeat.json"
+    if not hb_path.is_file():
+        return None
+    try:
+        with open(hb_path, "r") as f:
+            data = json.load(f)
+        ts = data.get("timestamp")
+        if not isinstance(ts, str) or not ts:
+            return None
+        # Reuse shared timestamp parser (supports Z suffix)
+        from common.heartbeat import parse_timestamp  # local import to avoid hard dependency at import-time
+        return parse_timestamp(ts)
+    except Exception:
+        # Heartbeat is best-effort; treat unreadable as missing
+        return None
+
+
+def attach_heartbeat_liveness(
+    df: "pd.DataFrame",
+    *,
+    alive_ttl_s: float = 120.0,
+    now: Optional[datetime] = None,
+) -> "pd.DataFrame":
+    """Attach heartbeat liveness columns based on run_dir/heartbeat.json.
+    
+    Heartbeats are written by `HeartbeatWriter` (runctl liveness tracking).
+    We consider a heartbeat "alive" when its timestamp is within `alive_ttl_s`.
+    
+    Adds columns:
+        - heartbeat_ts: datetime (UTC) or NaT
+        - heartbeat_age_s: float seconds or NaN
+        - heartbeat_alive: bool
+    """
+    pd = require_pandas()
+    if df.empty:
+        out = df.copy()
+        out["heartbeat_ts"] = pd.Series(dtype="datetime64[ns, UTC]")
+        out["heartbeat_age_s"] = pd.Series(dtype="float")
+        out["heartbeat_alive"] = pd.Series(dtype="bool")
+        return out
+    
+    out = df.copy()
+    now_dt = now or datetime.now(timezone.utc)
+    
+    def _ts(row) -> Optional[datetime]:
+        run_dir = row.get("run_dir")
+        if not run_dir or not isinstance(run_dir, str):
+            return None
+        return _read_heartbeat_timestamp(Path(run_dir))
+    
+    out["heartbeat_ts"] = out.apply(_ts, axis=1)
+    out["heartbeat_ts"] = pd.to_datetime(out["heartbeat_ts"], errors="coerce", utc=True)
+    
+    # Age in seconds (NaN if missing)
+    now_ts = pd.Timestamp(now_dt)
+    out["heartbeat_age_s"] = (now_ts - out["heartbeat_ts"]).dt.total_seconds()
+    out.loc[out["heartbeat_ts"].isna(), "heartbeat_age_s"] = pd.NA
+    
+    out["heartbeat_alive"] = out["heartbeat_age_s"].notna() & (out["heartbeat_age_s"] <= alive_ttl_s)
+    out["heartbeat_alive"] = out["heartbeat_alive"].fillna(False).astype(bool)
+    
     return out
 
 
