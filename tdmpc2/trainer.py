@@ -105,9 +105,14 @@ class Trainer():
 			if self._auto_utd.enabled:
 				checkpoint_data['auto_utd'] = self._auto_utd.get_effective_config()
 				self._auto_utd.save_log()  # Also save detailed log
-			torch.save(checkpoint_data, state_path)
+			try:
+				torch.save(checkpoint_data, state_path)
+			except Exception as e:
+				if self.cfg.rank == 0:
+					print(colored(f'Failed to save trainer checkpoint at step {self._step}: {e}', 'red', attrs=['bold']))
+				raise
 			
-			# Update heartbeat with checkpoint info
+			# Update heartbeat with checkpoint info only after successful save
 			self._heartbeat.update_checkpoint(self._step, str(state_path))
 			
 			if self.cfg.rank == 0:
