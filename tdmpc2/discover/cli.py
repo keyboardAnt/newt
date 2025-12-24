@@ -67,7 +67,7 @@ def cmd_refresh(args) -> int:
 def cmd_status(args) -> int:
     """Show training progress summary."""
     from .api import load_df
-    from .analysis import build_task_progress
+    from .liveness import build_task_progress, print_unknown_tasks_warning
     
     df = load_df(
         refresh=args.refresh,
@@ -79,7 +79,7 @@ def cmd_status(args) -> int:
     target = args.target_step
     show_all = getattr(args, 'show_all', False)
     
-    # Use shared helper aligned to official task list
+    # Use shared helper aligned to official task list (single source of truth: discover.liveness)
     # If --all, pass task_list=None and include_unknown=True to show everything
     if show_all:
         progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
@@ -106,7 +106,7 @@ def cmd_status(args) -> int:
     print(f"  Target step:         {target:>6,}")
     print("-" * 60)
     print(f"  🟢 Completed:        {completed:>6} ({pct_complete:.1f}%)")
-    print(f"  🔵 Running:          {running:>6} ({100*running/n_tasks:.1f}%)  <- active in wandb")
+    print(f"  🔵 Running:          {running:>6} ({100*running/n_tasks:.1f}%)  <- active (see discover.liveness)")
     print(f"  🟠 Stalled:          {stalled:>6} ({100*stalled/n_tasks:.1f}%)  <- needs restart")
     print(f"  🔴 Not Started:      {not_started:>6} ({100*not_started/n_tasks:.1f}%)")
     print("-" * 60)
@@ -116,14 +116,9 @@ def cmd_status(args) -> int:
     print(f"  Max steps:           {int(steps.max()):>6,}")
     print("=" * 60)
     
-    # Warn about unknown tasks if any (only when not using --all; print full list)
+    # Warn about unknown tasks if any (only when not using --all)
     if not show_all:
-        n_unknown = progress.attrs.get('n_unknown', 0)
-        if n_unknown > 0:
-            unknown = progress.attrs.get('unknown_tasks', [])
-            print(f"\n  ⚠️  {n_unknown} unknown tasks in runs:")
-            for t in unknown:
-                print(f"     - {t}")
+        print_unknown_tasks_warning(progress)
     
     return 0
 
@@ -157,9 +152,8 @@ def cmd_running(args) -> int:
 
 def cmd_tasks(args) -> int:
     """List all tasks with progress."""
-    pd = require_pandas()
     from .api import load_df
-    from .analysis import attach_max_step, best_step_by_task
+    from .liveness import build_task_progress, print_unknown_tasks_warning
     
     df = load_df(
         refresh=args.refresh,
@@ -171,91 +165,57 @@ def cmd_tasks(args) -> int:
     target = args.target_step
     show_all = getattr(args, 'show_all', False)
     
-    # Get official task list (used for filtering and adding missing tasks)
-    official_tasks = set(load_task_list()) if not show_all else None
-    
-    if df.empty:
-        if show_all:
-            print("No runs found.")
-            return 1
-        # No runs - show all official tasks as not started
-        best = pd.DataFrame({'task': list(official_tasks)})
-        best['max_step'] = 0
-        best['progress_pct'] = 0.0
-        best['running_runs'] = 0
+    # Use shared helper aligned to tasks.json (single source of truth: discover.liveness)
+    if show_all:
+        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
     else:
-        # Filter to official tasks only (unless --all)
-        if not show_all:
-            df = df[df['task'].isin(official_tasks)]
-        
-        df_with_step = attach_max_step(df)
-        best = best_step_by_task(df)
-        
-        # Determine running status per task
-        has_wandb = df_with_step['found_in'].isin(['wandb', 'both']) if 'found_in' in df_with_step.columns else pd.Series(True, index=df_with_step.index)
-        running_mask = (df_with_step['status'] == 'running') & has_wandb
-        running_counts = df_with_step[running_mask].groupby('task').size()
-        
-        # Build output table
-        best = best.copy()
-        best['progress_pct'] = (100 * best['max_step'].fillna(0) / target).clip(upper=100).round(1)
-        best['running_runs'] = best['task'].map(running_counts).fillna(0).astype(int)
-        
-        # Add any official tasks with no runs yet (unless --all)
-        if not show_all:
-            missing_tasks = official_tasks - set(best['task'])
-            if missing_tasks:
-                missing_df = pd.DataFrame({'task': list(missing_tasks)})
-                missing_df['max_step'] = 0
-                missing_df['progress_pct'] = 0.0
-                missing_df['running_runs'] = 0
-                best = pd.concat([best, missing_df], ignore_index=True)
-    
-    # Categorize
-    best['category'] = 'stalled'
-    best.loc[best['max_step'] >= target, 'category'] = 'completed'
-    best.loc[best['max_step'].fillna(0) == 0, 'category'] = 'not_started'
-    best.loc[(best['running_runs'] > 0) & (best['category'] == 'stalled'), 'category'] = 'running'
+        progress = build_task_progress(df, target_step=target)
     
     # Apply filters
     if args.not_started:
-        best = best[best['category'] == 'not_started']
+        progress = progress[progress['category'] == 'not_started']
     if args.stalled:
-        best = best[best['category'] == 'stalled']
+        progress = progress[progress['category'] == 'stalled']
     if args.running:
-        best = best[best['category'] == 'running']
+        progress = progress[progress['category'] == 'running']
     if args.completed:
-        best = best[best['category'] == 'completed']
+        progress = progress[progress['category'] == 'completed']
     
-    # Sort
-    best = best.sort_values(['progress_pct', 'task'], ascending=[True, True])
+    # Sort (already sorted by progress, but re-sort after filter for consistency)
+    progress = progress.sort_values(['progress_pct', 'task'], ascending=[True, True])
     
     # Output
     if args.format == 'json':
         import json
-        cols = ['task', 'max_step', 'progress_pct', 'running_runs', 'category']
-        print(json.dumps(best[cols].to_dict(orient='records'), indent=2))
+        cols = ['task', 'max_step', 'progress_pct', 'heartbeat_alive_runs', 'wandb_running_runs', 'category']
+        print(json.dumps(progress[cols].to_dict(orient='records'), indent=2))
     elif args.format == 'csv':
-        cols = ['task', 'max_step', 'progress_pct', 'running_runs', 'category']
-        print(best[cols].to_csv(index=False))
+        cols = ['task', 'max_step', 'progress_pct', 'heartbeat_alive_runs', 'wandb_running_runs', 'category']
+        print(progress[cols].to_csv(index=False))
     else:
         # Table format
-        print("=" * 80)
-        print(f"{'ALL TASKS':^80}")
-        print("=" * 80)
-        print(f"{'Task':<45} {'Progress':>10} {'Max Step':>12} {'Runs':>6} {'Status':>15}")
-        print("-" * 80)
+        print("=" * 90)
+        print(f"{'ALL TASKS':^90}")
+        print("=" * 90)
+        print(f"{'Task':<45} {'Progress':>10} {'Max Step':>12} {'HB':>4} {'WB':>4} {'Status':>15}")
+        print("-" * 90)
         
         status_emoji = {'completed': '🟢', 'running': '🔵', 'stalled': '🟠', 'not_started': '🔴'}
-        for _, row in best.iterrows():
+        for _, row in progress.iterrows():
             step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
             emoji = status_emoji.get(row['category'], '')
             status_text = row['category'].replace('_', ' ')
             status_display = f"{emoji} {status_text}"
-            print(f"   {row['task']:<42} {row['progress_pct']:>8.1f}% {step_str:>12} {int(row['running_runs']):>6} {status_display:>15}")
+            hb = int(row.get('heartbeat_alive_runs', 0))
+            wb = int(row.get('wandb_running_runs', 0))
+            print(f"   {row['task']:<42} {row['progress_pct']:>8.1f}% {step_str:>12} {hb:>4} {wb:>4} {status_display:>15}")
         
-        print("-" * 80)
-        print(f"Total: {len(best)} tasks")
+        print("-" * 90)
+        print(f"Total: {len(progress)} tasks")
+        
+        # Warn about unknown tasks
+        if not show_all:
+            print_unknown_tasks_warning(progress)
     
     return 0
 
@@ -263,7 +223,7 @@ def cmd_tasks(args) -> int:
 def cmd_domains(args) -> int:
     """Show progress by domain."""
     from .api import load_df
-    from .analysis import build_task_progress
+    from .liveness import build_task_progress, print_unknown_tasks_warning
     
     df = load_df(
         refresh=args.refresh,
@@ -275,7 +235,8 @@ def cmd_domains(args) -> int:
     target = args.target_step
     show_all = getattr(args, 'show_all', False)
     
-    # Use shared helper aligned to tasks.json, so domains include not-started tasks.
+    # Use shared helper aligned to tasks.json (single source of truth: discover.liveness),
+    # so domains include not-started tasks.
     # With --all, also include unknown tasks seen in runs.
     if show_all:
         progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
@@ -323,12 +284,7 @@ def cmd_domains(args) -> int:
         print("-" * 80)
         
         if not show_all:
-            n_unknown = progress.attrs.get('n_unknown', 0)
-            if n_unknown > 0:
-                unknown = progress.attrs.get('unknown_tasks', [])
-                print(f"\n⚠️  {n_unknown} unknown tasks in runs:")
-                for t in unknown:
-                    print(f"  - {t}")
+            print_unknown_tasks_warning(progress)
     
     return 0
 
@@ -346,15 +302,8 @@ def cmd_restart(args) -> int:
         wandb_project=args.wandb_project,
     )
     
-    if df.empty:
-        print("No runs found.")
-        return 1
-    
-    # Filter to official tasks only
-    official_tasks = set(load_task_list())
-    df = df[df['task'].isin(official_tasks)]
-    
-    # Get tasks needing restart
+    # Get tasks needing restart (uses tasks.json alignment, includes not-started tasks)
+    # No need to filter df - tasks_needing_restart uses build_task_progress which is tasks.json-aligned
     needing = tasks_needing_restart(df, target_step=args.target_step)
     
     if needing.empty:

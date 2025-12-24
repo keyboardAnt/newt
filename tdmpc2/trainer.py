@@ -358,16 +358,21 @@ class Trainer():
         while self._step <= self.cfg.steps:
 
             # Evaluate agent periodically
-            if self._step % self.cfg.eval_freq == 0:
+            # Skip eval at step=0 to avoid expensive video encoding/rendering before
+            # training even starts (this has historically been a common early-failure point).
+            if self._step > 0 and self._step % self.cfg.eval_freq == 0:
                 eval_metrics = self.eval()
                 eval_metrics.update(self.common_metrics())
                 if self.cfg.task == 'soup':
                     self.logger.pprint_multitask(eval_metrics, self.cfg)
                 self.logger.log(eval_metrics, 'eval')
 
-                # Save agent
-                if self._step % self.cfg.save_freq == 0 and self._step > 0:
-                    self.logger.save_agent(self.agent, f'{self._step:,}'.replace(',', '_'))
+                # Save checkpoint periodically.
+                # Also save once early (at the first eval) so short/fragile runs have a resumable ckpt.
+                should_save = (self._step % self.cfg.save_freq == 0) or (self._step == self.cfg.eval_freq)
+                if should_save:
+                    # Save full checkpoint (agent + trainer state) for robust resume.
+                    self.save_checkpoint()
 
                 # Reset environment and metrics
                 obs, info = self.env.reset()

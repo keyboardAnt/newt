@@ -6,7 +6,8 @@ Modules:
     cli: Unified CLI (python -m discover)
     runs: Discover runs from local logs or W&B
     cache: Caching and data loading
-    analysis: Data analysis functions
+    liveness: Central run liveness detection + task aggregation
+    analysis: Data analysis functions (delegates to liveness for task progress aggregation)
     plots: Visualization functions
     eval: Evaluation and video management
 """
@@ -16,10 +17,16 @@ from .api import load_df, load_df_with_meta
 from .config import get_logs_dir, get_cache_path, get_wandb_project, get_target_step
 from tasks import load_task_list, task_to_index, index_to_task
 
+# Central liveness + aggregation (single source of truth)
+from .liveness import (
+    attach_heartbeat, attach_liveness, build_task_progress,
+    get_heartbeat_ttl_s, print_unknown_tasks_warning,
+)
+
 # Low-level discovery
 from .runs import discover_local_logs, discover_wandb_runs
 from .cache import RunsCache, load_all_runs
-from .analysis import best_step_by_task, attach_max_step, attach_runtime, parse_step, build_task_progress
+from .progress import best_step_by_task, attach_max_step, attach_runtime, parse_step
 from .plots import (
     training_overview, plot_max_steps, tasks_needing_attention, progress_by_domain,
     running_runs_summary, tasks_needing_restart, currently_running_tasks,
@@ -41,6 +48,12 @@ __all__ = [
     'load_task_list',
     'task_to_index',
     'index_to_task',
+    # liveness (single source of truth)
+    'attach_heartbeat',
+    'attach_liveness',
+    'build_task_progress',
+    'get_heartbeat_ttl_s',
+    'print_unknown_tasks_warning',
     # runs
     'discover_local_logs',
     'discover_wandb_runs',
@@ -52,7 +65,6 @@ __all__ = [
     'best_step_by_task',
     'attach_max_step',
     'attach_runtime',
-    'build_task_progress',
     # plots
     'training_overview',
     'plot_max_steps',

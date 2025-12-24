@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from discover.runs import discover, DEFAULT_LOGS_DIR, DEFAULT_WANDB_PROJECT
-from discover.analysis import attach_max_step, best_step_by_task
+from discover.progress import attach_max_step, best_step_by_task
 
 
 def main():

@@ -8,6 +8,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 import warnings
 warnings.filterwarnings('ignore')
 from copy import deepcopy
@@ -141,7 +142,42 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 		print(colored('Rank:', 'yellow', attrs=['bold']), rank)
 	set_seed(cfg.seed + rank)
 	cfg.rank = rank
-	torch.cuda.set_device(rank)
+
+	# -------------------------------------------------------------------------
+	# CUDA init can occasionally fail transiently on the cluster (e.g. bad/blocked GPU
+	# assignment). Retry a few times before giving up.
+	# -------------------------------------------------------------------------
+	def _init_cuda_device_with_retries(max_retries: int = 5, base_sleep_s: float = 5.0):
+		last_exc = None
+		for attempt in range(1, max_retries + 1):
+			try:
+				torch.cuda.set_device(rank)
+				# Force CUDA context init early to fail fast here (and be retried)
+				_ = torch.empty(1, device=f"cuda:{rank}")
+				return
+			except Exception as e:
+				last_exc = e
+				msg = str(e)
+				retriable = (
+					"CUDA-capable device(s) is/are busy or unavailable" in msg
+					or "CUDA error" in msg
+				)
+				if not retriable or attempt == max_retries:
+					raise
+				sleep_s = min(60.0, base_sleep_s * attempt)
+				print(
+					colored(
+						f"[Rank {cfg.rank}] CUDA init failed (attempt {attempt}/{max_retries}): {msg}. "
+						f"Retrying in {sleep_s:.0f}s...",
+						"yellow",
+						attrs=["bold"],
+					)
+				)
+				time.sleep(sleep_s)
+		if last_exc is not None:
+			raise last_exc
+
+	_init_cuda_device_with_retries()
 
 	# split tasks across processes by rank
 	if cfg.task == 'soup':
@@ -160,13 +196,24 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 		agent = TDMPC2(model, cfg)
 		return agent
 
-	trainer = Trainer(
-		cfg=cfg,
-		env=make_env(cfg),
-		agent=make_agent(cfg),
-		buffer=buffer,
-		logger=Logger(cfg),
-	)
+	# Build components with best-effort crash reporting to run_info.yaml.
+	# (This is helpful for early failures before the main training try/except.)
+	try:
+		env = make_env(cfg)
+		logger = Logger(cfg)
+		agent = make_agent(cfg)
+		trainer = Trainer(
+			cfg=cfg,
+			env=env,
+			agent=agent,
+			buffer=buffer,
+			logger=logger,
+		)
+	except Exception as e:
+		print(colored(f'[Rank {cfg.rank}] Training init crashed with exception: {repr(e)}', 'red', attrs=['bold']))
+		if cfg.rank == 0:
+			update_run_info(cfg.work_dir, 'crashed', final_step=0, error=repr(e))
+		raise
 
 	# Register signal handlers for graceful preemption (LSF uses SIGTERM/SIGUSR2)
 	def handle_preemption(signum, frame):
@@ -195,6 +242,11 @@ def train(rank: int, cfg: dict, buffer: Buffer):
 		raise
 	except Exception as e:
 		print(colored(f'[Rank {cfg.rank}] Training crashed with exception: {repr(e)}', 'red', attrs=['bold']))
+		# Best-effort: persist a checkpoint for debugging/resume before propagating.
+		try:
+			trainer.save_checkpoint()
+		except Exception as ckpt_e:
+			print(colored(f'[Rank {cfg.rank}] Failed to save crash checkpoint: {repr(ckpt_e)}', 'red', attrs=['bold']))
 		if cfg.rank == 0:
 			update_run_info(cfg.work_dir, 'crashed', final_step=trainer._step, error=repr(e))
 		raise

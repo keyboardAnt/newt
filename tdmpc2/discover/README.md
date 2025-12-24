@@ -46,7 +46,7 @@ All commands are available via `python -m discover <command>` or `make <target>`
 | Command | Make Target | Description |
 |---------|-------------|-------------|
 | `status` | `make status` | Training progress overview (completed/running/stalled/not-started) |
-| `running` | `make running` | Currently running tasks (wandb-verified) |
+| `running` | `make running` | Currently running tasks (uses central liveness) |
 | `tasks` | `make tasks` | List all tasks with progress |
 | `domains` | `make domains` | Progress grouped by domain |
 | `refresh` | `make refresh` | Force refresh cache from local logs + wandb |
@@ -171,11 +171,11 @@ from discover import get_logs_dir, get_target_step, get_wandb_project
 | `plot_max_steps(df, target_step)` | Horizontal bar chart of per-task progress |
 | `progress_by_domain(df, target_step)` | Aggregate progress by domain with visualization |
 
-### Analysis (`discover.analysis`)
+### Progress helpers (`discover.progress`)
 
 | Function | Description |
 |----------|-------------|
-| `attach_max_step(df)` | Add `max_step` column from checkpoint or W&B summary |
+| `attach_max_step(df)` | Add `max_step` column from the best available progress fields |
 | `best_step_by_task(df)` | Get run with highest step per task |
 
 ### Eval (`discover.eval`)

@@ -106,7 +106,9 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
             "local_run_id": run_dir.name,
             "exp_name": run_info.get("exp_name"),
             "status": run_info.get("status", "unknown"),
-            "ckpt_step": parse_ckpt_step(best_ckpt) if best_ckpt else 0,
+            # Use None (not 0) when no checkpoint exists so wandb summary['_step']
+            # can still contribute to max_step/progress.
+            "ckpt_step": parse_ckpt_step(best_ckpt) if best_ckpt else None,
             "steps": run_info.get("steps"),
             "updated_at": datetime.fromtimestamp(
                 best_ckpt.stat().st_mtime if best_ckpt else run_info_path.stat().st_mtime

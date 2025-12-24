@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 if TYPE_CHECKING:
     import pandas as pd
 
-from .analysis import best_step_by_task
+from .progress import best_step_by_task
 
 
 def require_pandas():
@@ -555,7 +555,7 @@ def main():
     """CLI to generate eval script for tasks needing videos."""
     import argparse
     from .runs import discover
-    from .analysis import attach_max_step
+    from .progress import attach_max_step
     
     parser = argparse.ArgumentParser(description="Generate eval script for tasks needing videos.")
     parser.add_argument("--min-progress", type=float, default=0.5, help="Minimum progress threshold (default: 0.5)")
