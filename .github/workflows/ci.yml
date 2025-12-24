@@ -23,7 +23,7 @@ jobs:
       - name: Run heartbeat unit tests
         run: |
           cd tdmpc2
-          python -m unittest tests.test_heartbeat -v
+          python -m unittest tests.local.test_heartbeat -v
 
   watcher-validation:
     name: Heartbeat Watcher Validation
@@ -41,7 +41,7 @@ jobs:
       - name: Test watcher script imports and CLI
         run: |
           cd tdmpc2
-          python tests/test_heartbeat_e2e.py --help
+          python tests/cluster/lsf/test_heartbeat_lsf_e2e.py --help
 
       - name: Test watcher validation logic
         run: |
@@ -52,7 +52,7 @@ jobs:
           import time
           from pathlib import Path
           from datetime import datetime, timezone
-          from tests.test_heartbeat_e2e import HeartbeatWatcher, REQUIRED_FIELDS
+          from tests.cluster.lsf.test_heartbeat_lsf_e2e import HeartbeatWatcher, REQUIRED_FIELDS
 
           print('=== Test 1: Schema validation ===')
           with tempfile.TemporaryDirectory() as tmpdir:
