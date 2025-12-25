@@ -148,6 +148,9 @@ class Trainer():
             self._step = parse_step(checkpoint_path)
             self._ep_idx = 0
 
+        # Align training cycle to resumed step (avoids "step % update_freq" asserts).
+        self._train_cycle_start_step = self._step
+
         # Record resume lineage in run_info.yaml (only on rank 0)
         if self.cfg.rank == 0:
             update_run_info_resume(self.cfg.work_dir, checkpoint_path, self._step)

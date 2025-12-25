@@ -1,16 +1,33 @@
 #!/bin/bash
 # Task execution script for expert training (called by submit_expert_array.sh)
 
+set -euo pipefail
+
 cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 
-# Ensure video deps for wandb.Video (moviepy, imageio-ffmpeg)
-# Avoid doing network installs on every cluster job; only install if missing.
-# Keep this pinned for reproducibility (matches docker/environment.yaml).
-python - <<'PY' || pip install -q "wandb[media]==0.22.1"
-import wandb  # noqa: F401
-import moviepy  # noqa: F401
-import imageio_ffmpeg  # noqa: F401
-PY
+# =============================================================================
+# GPU BINDING: Ensure only the LSF-assigned GPU is visible to CUDA/PyTorch.
+# LSF sets CUDA_VISIBLE_DEVICES when using -gpu with exclusive mode, but inside
+# containers this can be lost or overwritten. Re-export from the LSF env var.
+# =============================================================================
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  echo "GPU binding: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} (from LSF)"
+elif [[ -n "${LSB_GPU_ALLOC:-}" ]]; then
+  # Fallback: parse GPU index from LSF's allocation string (e.g., "gpu000/0" -> "0")
+  GPU_ID=$(echo "$LSB_GPU_ALLOC" | grep -oP '\d+$' | head -1)
+  if [[ -n "$GPU_ID" ]]; then
+    export CUDA_VISIBLE_DEVICES="$GPU_ID"
+    echo "GPU binding: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} (parsed from LSB_GPU_ALLOC=${LSB_GPU_ALLOC})"
+  fi
+fi
+
+# Diagnostics: show GPU environment (helps debug "device busy" errors)
+echo "=== GPU environment ==="
+echo "hostname: $(hostname)"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+echo "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L 2>/dev/null || echo "(nvidia-smi not available)"
+echo "======================="
 
 # Get task name from tasks.py (ensures consistent filtering of variant tasks)
 TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
@@ -83,7 +100,7 @@ ARGS=(
   use_demos=False
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json
   exp_name="expert_${TASK}"
-  save_video=True
+  save_video=False
   compile=False
 )
 
