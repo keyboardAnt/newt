@@ -64,6 +64,12 @@ class Buffer:
 		)
 		self._num_eps = 0
 		self._num_demos = 0
+		# Track number of stored transitions ourselves.
+		#
+		# Rationale: some TorchRL versions can report misleading lengths with
+		# LazyTensorStorage before the underlying storage is initialized, which can
+		# cause `can_sample()` to return True and then crash in `.sample()`.
+		self._num_transitions = 0
 
 	@property
 	def capacity(self):
@@ -74,19 +80,16 @@ class Buffer:
 		return self._num_eps
 
 	def __len__(self):
-		"""Number of stored transitions in the underlying replay buffer."""
-		try:
-			return len(self._buffer)
-		except Exception:
-			# TorchRL LazyTensorStorage can raise if uninitialized; treat as empty.
-			return 0
+		"""Number of stored transitions currently available for sampling."""
+		return int(self._num_transitions)
 
 	def can_sample(self) -> bool:
 		"""Whether the buffer has enough data to produce a full training batch."""
-		try:
-			return len(self._buffer) >= self._sample_size
-		except Exception:
+		# Must have at least some data (also avoids TorchRL "non-initialized storage"
+		# crash when nothing was ever added).
+		if (self._num_eps + self._num_demos) <= 0:
 			return False
+		return self._num_transitions >= self._sample_size
 
 	def set_storage_device(self, device):
 		"""Set the storage device for the buffer."""
@@ -125,10 +128,18 @@ class Buffer:
 		self._num_demos = tds["episode"].max().item() + 1
 		self.print_requirements(tds[tds["episode"] == 0])
 		self._buffer.extend(tds)
+		# Best-effort transition count. Clamp at capacity since the storage is
+		# bounded and may overwrite older data.
+		try:
+			n = int(tds.shape[0])
+		except Exception:
+			# Fallback: at least record that storage is initialized.
+			n = self._capacity
+		self._num_transitions = min(self._capacity, max(self._num_transitions, n))
 		print(
 			colored(
 				f"Added {self._num_demos} demonstrations to {self.__class__.__name__}. "
-				f"Capacity: {len(self._buffer)}/{self.capacity}.",
+				f"Capacity: {self._num_transitions:,}/{self.capacity:,}.",
 				"green",
 				attrs=["bold"],
 			)
@@ -147,7 +158,15 @@ class Buffer:
 			self.print_requirements(td[0])
 		td["episode"] = torch.full_like(td["reward"], self.next_episode_id(world_size, rank), dtype=torch.int64)
 		for i in range(num_new_eps):
+			# Count transitions before extending (extend may be async/prefetched).
+			# td[i] is expected to be shaped [T, ...] where T is episode length + 1.
+			try:
+				n = int(td[i].shape[0])
+			except Exception:
+				n = 0
 			self._buffer.extend(td[i])
+			if n > 0:
+				self._num_transitions = min(self._capacity, self._num_transitions + n)
 		self._num_eps += num_new_eps
 		return self._num_eps
 

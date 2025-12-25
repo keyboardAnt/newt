@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Tuple
@@ -19,6 +20,23 @@ def require_pandas():
     except ImportError as exc:
         raise SystemExit("pandas is required. Install with `pip install pandas`.") from exc
     return pd
+
+
+def _with_suffix_or_append(path: Path, suffix: str) -> Path:
+    """Like Path.with_suffix, but works even if the path has no suffix."""
+    try:
+        return path.with_suffix(suffix)
+    except ValueError:
+        return Path(str(path) + suffix)
+
+
+def _pkl_path_for(data_path: Path) -> Path:
+    """Pickle sidecar path used when parquet engines are unavailable."""
+    return _with_suffix_or_append(data_path, ".pkl")
+
+
+def _is_parquet_path(path: Path) -> bool:
+    return path.suffix.lower() in {".parquet", ".pq"}
 
 
 def combine_runs(*dfs: "pd.DataFrame") -> "pd.DataFrame":
@@ -74,22 +92,64 @@ def normalize_for_save(df: "pd.DataFrame") -> "pd.DataFrame":
 
 
 def save_cache(df: "pd.DataFrame", data_path: Path, meta_path: Path) -> datetime:
-    """Save DataFrame to parquet cache with metadata."""
+    """Save DataFrame to cache with metadata.
+
+    Prefer Parquet when available; fall back to pickle if Parquet engines
+    (pyarrow/fastparquet) are not installed.
+    """
     data_path.parent.mkdir(parents=True, exist_ok=True)
     df_norm = normalize_for_save(df)
-    df_norm.to_parquet(data_path, index=False)
+    try:
+        df_norm.to_parquet(data_path, index=False)
+    except ImportError:
+        # pandas requires optional parquet backends; keep discover usable without them.
+        # Store a sidecar pickle cache alongside the configured parquet path.
+        pkl_path = _pkl_path_for(data_path)
+        df_norm.to_pickle(pkl_path)
+        warnings.warn(
+            "Parquet engine not available (pyarrow/fastparquet). "
+            f"Saved runs cache as pickle instead: {pkl_path}",
+            RuntimeWarning,
+        )
     ts = latest_timestamp(df)
     meta_path.write_text(ts.isoformat())
     return ts
 
 
 def load_cache(data_path: Path, meta_path: Path) -> Tuple[Optional["pd.DataFrame"], Optional[datetime]]:
-    """Load DataFrame from parquet cache with metadata."""
+    """Load DataFrame from cache with metadata.
+
+    Reads Parquet if possible; falls back to a sidecar pickle cache if Parquet
+    engines are missing.
+    """
     pd = require_pandas()
     
-    if not data_path.is_file() or not meta_path.is_file():
+    pkl_path = _pkl_path_for(data_path)
+    candidates = [p for p in (data_path, pkl_path) if p.is_file()]
+    if not candidates:
         return None, None
-    df = pd.read_parquet(data_path)
+
+    # Prefer the newest cache if both exist (avoids stale parquet vs newer pickle).
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    chosen = candidates[0]
+
+    df = None
+    if _is_parquet_path(chosen):
+        try:
+            df = pd.read_parquet(chosen)
+        except ImportError:
+            # No parquet engine in this environment; try pickle fallback.
+            if pkl_path.is_file():
+                df = pd.read_pickle(pkl_path)
+            else:
+                warnings.warn(
+                    "Parquet cache exists but parquet engine is missing (pyarrow/fastparquet). "
+                    "Ignoring cache and refreshing from source.",
+                    RuntimeWarning,
+                )
+                return None, None
+    else:
+        df = pd.read_pickle(chosen)
     
     # Parse JSON strings back to dicts/lists
     def from_json_cell(x):
@@ -106,10 +166,12 @@ def load_cache(data_path: Path, meta_path: Path) -> Tuple[Optional["pd.DataFrame
         if col in df.columns:
             df[col] = df[col].apply(from_json_cell)
     
-    try:
-        ts = datetime.fromisoformat(meta_path.read_text().strip())
-    except Exception:
-        ts = None
+    ts = None
+    if meta_path.is_file():
+        try:
+            ts = datetime.fromisoformat(meta_path.read_text().strip())
+        except Exception:
+            ts = None
     return df, ts
 
 
