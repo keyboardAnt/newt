@@ -11,8 +11,8 @@ dependencies:
     - dm-control==1.0.34
     - glfw==2.10.0
     - gymnasium==0.29.1
-    - gymnasium[atari,accept-rom-license]
-    - gymnasium[box2d]
+    - gymnasium[atari,accept-rom-license]==0.29.1
+    - gymnasium[box2d]==0.29.1
     - gpustat==1.1.1
     # pynvml already installed via mani-skill-nightly (v13.0.1)
     - ffmpeg==1.4
@@ -23,13 +23,14 @@ dependencies:
     - hydra-submitit-launcher==1.2.0
     - submitit==1.5.3
     - omegaconf==2.3.0
-    - git+https://github.com/nicklashansen/metaworld.git
+    - metaworld @ git+https://github.com/nicklashansen/metaworld.git
     - mani_skill-nightly==2025.9.19.39
     - mujoco==3.3.6
     - numpy==1.24.4
-    - pandas
-    - matplotlib
-    - ipykernel
+    - pandas==2.3.3
+    - pyarrow==22.0.0
+    - matplotlib==3.10.8
+    - ipykernel==7.1.0
     - robodesk==1.0.0
     - ogbench==1.1.5
     - swig==4.3.1
