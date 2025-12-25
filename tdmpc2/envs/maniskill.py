@@ -387,6 +387,10 @@ def make_env(cfg):
 	task_cfg = MANISKILL_TASKS[cfg.task]
 	# Only enable rendering when video saving is requested (avoids GPU buffer errors in headless envs)
 	render_mode = 'rgb_array' if cfg.get('save_video', False) else None
+	# Disable renderer entirely when not recording video.
+	# ManiSkill-nightly supports render_backend="none", which avoids Vulkan/SAPIEN
+	# RenderSystem initialization (common cluster failure: "supported physical device cuda:0").
+	render_backend = None if render_mode else "none"
 	
 	env = gym.make(
 		task_cfg['env'],
@@ -394,6 +398,7 @@ def make_env(cfg):
 		control_mode=task_cfg['control_mode'],
 		num_envs=1,
 		render_mode=render_mode,
+		render_backend=render_backend,
 		sensor_configs=dict(width=cfg.render_size, height=cfg.render_size) if render_mode else None,
 		human_render_camera_configs=dict(width=cfg.render_size, height=cfg.render_size) if render_mode else None,
 		reconfiguration_freq=None,
