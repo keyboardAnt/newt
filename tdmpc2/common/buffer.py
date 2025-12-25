@@ -73,6 +73,21 @@ class Buffer:
 	def num_eps(self):
 		return self._num_eps
 
+	def __len__(self):
+		"""Number of stored transitions in the underlying replay buffer."""
+		try:
+			return len(self._buffer)
+		except Exception:
+			# TorchRL LazyTensorStorage can raise if uninitialized; treat as empty.
+			return 0
+
+	def can_sample(self) -> bool:
+		"""Whether the buffer has enough data to produce a full training batch."""
+		try:
+			return len(self._buffer) >= self._sample_size
+		except Exception:
+			return False
+
 	def set_storage_device(self, device):
 		"""Set the storage device for the buffer."""
 		if isinstance(device, str):

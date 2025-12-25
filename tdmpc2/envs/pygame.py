@@ -28,6 +28,8 @@ PYGAME_TASKS = {
 	'pygame-point-maze-var4': games.PointMazeVariant4Env,
 	'pygame-reacher-easy': games.ReacherEasyEnv,
 	'pygame-reacher-hard': games.ReacherHardEnv,
+	'pygame-reacher-var1': games.ReacherVar1Env,
+	'pygame-reacher-var2': games.ReacherVar2Env,
 }
 
 

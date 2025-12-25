@@ -13,4 +13,4 @@ from envs.tasks.pygame.cartpole import CartpoleBalanceEnv, CartpoleSwingupEnv, C
     CartpoleSwingupSparseEnv, CartpoleTremorEnv
 from envs.tasks.pygame.point_maze import PointMazeVariant1Env, PointMazeVariant2Env, PointMazeVariant3Env, \
     PointMazeVariant4Env
-from envs.tasks.pygame.reacher import ReacherEasyEnv, ReacherHardEnv
+from envs.tasks.pygame.reacher import ReacherEasyEnv, ReacherHardEnv, ReacherVar1Env, ReacherVar2Env

@@ -37,7 +37,15 @@ def parse_step(p: Path):
 candidates = []
 
 # Run-first layout: logs/<timestamp>_expert_<task>/checkpoints/<step>.pt
-for run_dir in logs_dir.glob(f"*expert_{task}*"):
+# Match exact task to avoid accidental prefix matches
+# (e.g. mw-plate-slide vs mw-plate-slide-back-side, mw-button-press-topdown vs mw-button-press-topdown-wall).
+for run_dir in logs_dir.glob("*_expert_*"):
+    name = run_dir.name
+    if "_expert_" not in name:
+        continue
+    suffix = name.split("_expert_", 1)[1]
+    if suffix != task:
+        continue
     ckpt_dir = run_dir / "checkpoints"
     if not ckpt_dir.is_dir():
         continue

@@ -286,15 +286,20 @@ class Trainer():
 
     def train(self):
         """Train a Newt agent."""
+        exit_code = 0
         try:
             self._train_body()
+        except Exception:
+            # Ensure W&B reflects failures (not "Finished") when exceptions occur.
+            exit_code = 1
+            raise
         finally:
             # Always stop heartbeat, even on error/exception
             self._heartbeat.update_status("stopping")
             self._heartbeat.write_now()
             self._heartbeat.stop()
             # Ensure logger is finalized regardless of success or failure
-            self.logger.finish()
+            self.logger.finish(exit_code=exit_code)
 
     def _train_body(self):
         """Training loop body (separated for heartbeat try/finally wrapper)."""
@@ -443,7 +448,13 @@ class Trainer():
                     train_metrics = defaultdict(list)
 
             # Update agent
-            if self._step >= self.cfg.seeding_coef * self._update_freq:
+            buffer_ready = True
+            if hasattr(self.buffer, "can_sample"):
+                buffer_ready = self.buffer.can_sample()
+            elif hasattr(self.buffer, "num_eps"):
+                buffer_ready = self.buffer.num_eps > 0
+
+            if self._step >= self.cfg.seeding_coef * self._update_freq and buffer_ready:
                 # Use adaptive UTD if enabled, otherwise use config value
                 current_utd = self._auto_utd.utd if self._auto_utd.enabled else self.cfg.utd
                 self._update_tokens += self.cfg.num_envs * self.cfg.world_size * current_utd
@@ -475,6 +486,18 @@ class Trainer():
                 # Track step timing for adaptive UTD
                 if self._auto_utd.enabled:
                     self._auto_utd.start_step()
+            elif self._step >= self.cfg.seeding_coef * self._update_freq and not buffer_ready:
+                # Common when resuming from a checkpoint: we restore agent state but not the replay buffer.
+                # Skip updates until enough experience is collected to sample a full batch.
+                if self.cfg.rank == 0 and not hasattr(self, "_warned_buffer_not_ready"):
+                    self._warned_buffer_not_ready = True
+                    print(
+                        colored(
+                            "[Rank 0] Replay buffer not ready for sampling yet; skipping updates until enough experience is collected.",
+                            "yellow",
+                            attrs=["bold"],
+                        )
+                    )
 
         # Save auto-UTD log and print summary
         if self._auto_utd.enabled:

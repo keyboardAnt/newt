@@ -166,11 +166,16 @@ class Logger:
 				artifact.add_file(fp)
 				self._wandb.log_artifact(artifact)
 
-	def finish(self, agent=None):
+	def finish(self, agent=None, exit_code=None):
 		if agent is not None:
 			self.save_agent(agent)
 		if self._wandb:
-			self._wandb.finish()
+			# Prefer propagating exit_code so W&B UI doesn't show crashes as "Finished".
+			try:
+				self._wandb.finish(exit_code=exit_code)
+			except TypeError:
+				# Older wandb versions may not accept exit_code
+				self._wandb.finish()
 
 	def _format(self, key, value, ty):
 		if ty == "int":

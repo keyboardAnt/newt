@@ -60,9 +60,10 @@ def _parse_heartbeat_timestamp(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
-def _read_heartbeat_json(run_dir: str) -> Optional[dict]:
+def _read_heartbeat_json(run_dir) -> Optional[dict]:
     """Read and parse heartbeat.json from a run directory. Returns None on error."""
-    if not run_dir:
+    # Handle None, NaN, empty string
+    if run_dir is None or (isinstance(run_dir, float) and run_dir != run_dir) or not run_dir:
         return None
     hb_path = Path(run_dir) / "heartbeat.json"
     if not hb_path.is_file():

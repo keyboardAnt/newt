@@ -270,3 +270,17 @@ class ReacherHardEnv(ReacherEnv):
 
     def __init__(self):
         super().__init__(target_size_m=0.025)
+
+
+class ReacherVar1Env(ReacherEnv):
+    """Default reacher variant (matches tasks.json: pygame-reacher-var1)."""
+
+    def __init__(self):
+        super().__init__()
+
+
+class ReacherVar2Env(ReacherEnv):
+    """Additional reacher variant (matches tasks.json: pygame-reacher-var2)."""
+
+    def __init__(self):
+        super().__init__()
