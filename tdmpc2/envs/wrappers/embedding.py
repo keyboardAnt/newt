@@ -48,7 +48,7 @@ class EmbeddingWrapper(gym.Wrapper):
 			for _ in range(self.num_frames):
 				self._frames[i].append(encoded[i])
 		obs['rgb'] = self._stack_all(encoded)
-		return TensorDict(obs, batch_size=self.cfg.num_envs), info
+		return TensorDict(obs, batch_size=self.num_envs), info
 
 	def _stack_encoded(self, env_idx, encoded):
 		"""Helper to stack an already-encoded final observation."""

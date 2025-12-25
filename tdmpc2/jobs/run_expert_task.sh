@@ -79,6 +79,7 @@ ARGS=(
   model_size=B
   steps=5000000
   num_envs=2
+  env_mode=sync
   use_demos=False
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json
   exp_name="expert_${TASK}"

@@ -321,7 +321,7 @@ def cmd_restart(args) -> int:
     # Group by queue/GPU-mode (matching submit_expert_array.sh)
     # Tasks from tasks.json sorted alphabetically (225 total after filtering variants):
     # 1-58: long-gpu exclusive (non-ManiSkill)
-    # 59-105: long-gpu shared (ManiSkill, needs non-exclusive GPU for SAPIEN/Vulkan)
+    # 59-105: long-gpu exclusive (ManiSkill)
     # 106-225: short-gpu exclusive (non-ManiSkill)
     groups = {
         'long_exclusive': [],
@@ -351,8 +351,8 @@ def cmd_restart(args) -> int:
         else:
             idx_str = ','.join(str(i) for i in sorted(indices))
         
-        mode_opt = 'mode=exclusive_process' if gpu_mode == 'exclusive' else ''
-        gpu_spec = f'"num=1:{mode_opt}"' if mode_opt else '"num=1"'
+        # Always use exclusive GPU mode to avoid CUDA init OOM / GPU contention during restarts.
+        gpu_spec = '"num=1:mode=exclusive_process"'
         
         return f'''bsub -J "newt-expert[{idx_str}]" \\
   -q {queue} \\
@@ -373,8 +373,8 @@ def cmd_restart(args) -> int:
     
     if groups['long_shared']:
         indices = [idx for _, idx in groups['long_shared']]
-        cmd = format_bsub_cmd(indices, 'long-gpu', 'shared', '48:00')
-        commands.append(('long-gpu (shared/ManiSkill, 48h)', cmd, groups['long_shared']))
+        cmd = format_bsub_cmd(indices, 'long-gpu', 'exclusive', '48:00')
+        commands.append(('long-gpu (exclusive/ManiSkill, 48h)', cmd, groups['long_shared']))
     
     if groups['short_exclusive']:
         indices = [idx for _, idx in groups['short_exclusive']]
