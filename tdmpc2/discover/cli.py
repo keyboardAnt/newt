@@ -351,8 +351,13 @@ def cmd_restart(args) -> int:
         else:
             idx_str = ','.join(str(i) for i in sorted(indices))
         
-        # Always use exclusive GPU mode to avoid CUDA init OOM / GPU contention during restarts.
-        gpu_spec = '"num=1:mode=exclusive_process"'
+        # Use shared/default GPU mode.
+        #
+        # Rationale: On this cluster, requesting EXCLUSIVE_PROCESS frequently causes
+        # immediate CUDA init failures ("device(s) busy or unavailable") when the GPU
+        # already has a context (or the scheduler's exclusivity isn't perfectly enforced).
+        # Shared mode avoids fail-fast at startup; true OOMs are handled separately.
+        gpu_spec = '"num=1"'
         
         return f'''bsub -J "newt-expert[{idx_str}]" \\
   -q {queue} \\

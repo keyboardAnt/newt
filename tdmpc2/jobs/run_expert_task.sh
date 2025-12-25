@@ -21,6 +21,11 @@ elif [[ -n "${LSB_GPU_ALLOC:-}" ]]; then
   fi
 fi
 
+# Make NVIDIA_VISIBLE_DEVICES consistent for libraries that key off it (e.g. Vulkan/SAPIEN).
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  export NVIDIA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}"
+fi
+
 # Diagnostics: show GPU environment (helps debug "device busy" errors)
 echo "=== GPU environment ==="
 echo "hostname: $(hostname)"
@@ -28,6 +33,32 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-<unset>}"
 nvidia-smi -L 2>/dev/null || echo "(nvidia-smi not available)"
 echo "======================="
+
+# If LSF gave us a specific physical GPU index, wait until it's not running compute workloads.
+# This avoids fail-fast startup when GPUs are in EXCLUSIVE_PROCESS mode but still occupied.
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  PHYS_GPU="${CUDA_VISIBLE_DEVICES%%,*}"
+  if [[ "${PHYS_GPU}" =~ ^[0-9]+$ ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    echo "GPU preflight: waiting for GPU ${PHYS_GPU} to be free..."
+    # Wait up to ~30 minutes (1800s) before giving up.
+    DEADLINE=$(( $(date +%s) + 1800 ))
+    while true; do
+      # List compute PIDs on the target GPU; empty output means no compute clients.
+      PIDS="$(nvidia-smi -i "${PHYS_GPU}" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | tr '\n' ',' || true)"
+      if [[ -z "${PIDS}" ]]; then
+        echo "GPU preflight: GPU ${PHYS_GPU} appears free."
+        break
+      fi
+      NOW=$(date +%s)
+      if (( NOW >= DEADLINE )); then
+        echo "GPU preflight: timeout waiting for GPU ${PHYS_GPU} (pids=${PIDS}). Proceeding anyway."
+        break
+      fi
+      echo "GPU preflight: GPU ${PHYS_GPU} busy (pids=${PIDS}) -> sleeping 30s"
+      sleep 30
+    done
+  fi
+fi
 
 # Get task name from tasks.py (ensures consistent filtering of variant tasks)
 TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
