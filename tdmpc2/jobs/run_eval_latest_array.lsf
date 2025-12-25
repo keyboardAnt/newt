@@ -13,7 +13,7 @@
 
 # Run inside the Docker image (must already be built and pushed)
 #BSUB -app nvidia-gpu
-#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1"
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
 
 cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 

@@ -19,7 +19,7 @@ bsub -J "newt-expert[1-58]" \
   -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
   -app nvidia-gpu \
-  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \
+  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2" \
   jobs/run_expert_task.sh
 
 echo "Submitting non-ManiSkill jobs 106-225 to short-gpu (6h walltime, exclusive GPU)..."
@@ -30,7 +30,7 @@ bsub -J "newt-expert[106-225]" \
   -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
   -app nvidia-gpu \
-  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \
+  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2" \
   jobs/run_expert_task.sh
 
 # ============ MANISKILL TASKS (non-exclusive GPU for SAPIEN/Vulkan) ============
@@ -42,7 +42,7 @@ bsub -J "newt-expert[59-105]" \
   -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
   -app nvidia-gpu \
-  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \
+  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2" \
   jobs/run_expert_task.sh
 
 echo "Done. Monitor with: bjobs -J 'newt-expert*'"

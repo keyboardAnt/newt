@@ -4,7 +4,7 @@
 #BSUB -n 1
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -app nvidia-gpu
-#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1"
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
 #BSUB -R "rusage[mem=16000]"
 #BSUB -W 0:30
 #BSUB -o logs/heartbeat_e2e_%J.out

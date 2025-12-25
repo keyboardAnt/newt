@@ -361,7 +361,7 @@ def cmd_restart(args) -> int:
   -e {tdmpc2_dir}/logs/lsf/newt-expert.%J.%I.log \\
   -u "$USER" -N \\
   -app nvidia-gpu \\
-  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1" \\
+  -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2" \\
   {tdmpc2_dir}/jobs/run_expert_task.sh'''
     
     commands = []

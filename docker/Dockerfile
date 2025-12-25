@@ -1,7 +1,7 @@
 ##################################################
 # Build instructions:                            #
-# docker build . -t <user>/newt:1.0.1            #
-# docker push <user>/newt:1.0.1                  #
+# docker build . -t <user>/newt:1.0.2            #
+# docker push <user>/newt:1.0.2                  #
 ##################################################
 
 # base image

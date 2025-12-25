@@ -13,7 +13,7 @@
 #BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval-videos.%J.%I.log
 
 #BSUB -app nvidia-gpu
-#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1"
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
 
 cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 

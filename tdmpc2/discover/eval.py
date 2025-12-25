@@ -171,7 +171,7 @@ def generate_eval_script(
 #BSUB -e {project_root}/logs/lsf/newt-eval-videos.%J.%I.log
 
 #BSUB -app nvidia-gpu
-#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.1"
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
 
 cd {project_root}
 

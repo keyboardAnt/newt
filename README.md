@@ -37,7 +37,7 @@ Newt is a language-conditioned multitask world model based on [TD-MPC2](https://
 We provide a `Dockerfile` for easy installation. You can build the docker image by running
 
 ```
-cd docker && docker build . -t <user>/newt:1.0.1
+cd docker && docker build . -t <user>/newt:1.0.2
 ```
 
 This docker image contains all dependencies needed for running MMBench and Newt.
