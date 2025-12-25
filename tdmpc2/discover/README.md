@@ -73,14 +73,21 @@ Use `--all` to include all runs in the cache (including test/debug runs like `sm
 
 ## Log Directory Structure
 
-All logs use a **run-first** structure where each run gets a unique timestamp-based directory.
+All logs use a **task-first** structure where each task gets its own directory, and each run gets a unique timestamp-based subdirectory.
 
 ```
-logs/<YYYYMMDD_HHMMSS>[_exp_name]/
+logs/<task>/<YYYYMMDD_HHMMSS>[_exp_name]/
 ├── run_info.yaml      # Metadata: task(s), seed, exp_name, LSF job ID, git commit
 ├── checkpoints/       # Model checkpoints
 ├── videos/            # Evaluation videos
 └── wandb/             # Wandb sync data
+```
+
+Legacy layouts that are still supported by `discover/` tooling:
+
+```
+logs/<run_id>/run_info.yaml                 # older run-first
+logs/<task>/<seed>/<run_id>/run_info.yaml   # older nested
 ```
 
 ## Module Structure

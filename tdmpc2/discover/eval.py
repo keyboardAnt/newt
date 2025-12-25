@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from .progress import best_step_by_task
+from .runs import iter_run_info_paths
 
 
 def require_pandas():
@@ -54,24 +55,15 @@ def find_task_videos(task: str, logs_dir: Path) -> List[str]:
         return []
     
     videos = []
-    for run_dir in logs_dir.iterdir():
-        if not run_dir.is_dir():
+    for run_info_path in iter_run_info_paths(logs_dir):
+        run_dir = run_info_path.parent
+        try:
+            info = yaml.safe_load(run_info_path.read_text()) or {}
+            run_tasks = info.get("tasks", [info.get("task")])
+            if task not in run_tasks:
+                continue
+        except Exception:
             continue
-        
-        # Check if this run is for the target task
-        run_info_path = run_dir / "run_info.yaml"
-        if run_info_path.exists():
-            try:
-                info = yaml.safe_load(run_info_path.read_text()) or {}
-                run_tasks = info.get("tasks", [info.get("task")])
-                if task not in run_tasks:
-                    continue
-            except Exception:
-                continue
-        else:
-            # No run_info - check if task is in run directory name
-            if task not in run_dir.name:
-                continue
         
         # Found a run for this task - collect its videos
         run_videos = find_run_videos(run_dir)
@@ -191,18 +183,19 @@ from discover import parse_step
 
 task = os.environ.get("TASK", "")
 logs_dir = Path("logs")
+run_info_paths = []
+for pat in ("*/run_info.yaml", "*/*/run_info.yaml", "*/*/*/run_info.yaml"):
+    run_info_paths.extend(logs_dir.glob(pat))
+
 candidates = []
-for run_dir in logs_dir.iterdir():
-    if not run_dir.is_dir():
-        continue
-    run_info_path = run_dir / "run_info.yaml"
-    if run_info_path.exists():
-        info = yaml.safe_load(run_info_path.read_text()) or {{}}
-        tasks = info.get("tasks", [info.get("task")])
-        if task in tasks:
-            for ckpt in (run_dir / "checkpoints").glob("*.pt"):
-                if not ckpt.stem.endswith('_trainer'):
-                    candidates.append(ckpt)
+for run_info_path in run_info_paths:
+    run_dir = run_info_path.parent
+    info = yaml.safe_load(run_info_path.read_text()) or {{}}
+    tasks = info.get("tasks", [info.get("task")])
+    if task in tasks:
+        for ckpt in (run_dir / "checkpoints").glob("*.pt"):
+            if not ckpt.stem.endswith('_trainer'):
+                candidates.append(ckpt)
 if not candidates:
     print('CKPT=')
     print('RUN_ID=')

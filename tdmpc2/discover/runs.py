@@ -63,6 +63,29 @@ def read_text_if_exists(path: Path) -> Optional[str]:
         return None
 
 
+def iter_run_info_paths(logs_dir: Path) -> List[Path]:
+    """Return candidate run_info.yaml paths across supported on-disk layouts.
+
+    Supported layouts (depth from logs_dir):
+      - logs/<run_id>/run_info.yaml                       (legacy run-first)
+      - logs/<task>/<run_id>/run_info.yaml                (task-first)
+      - logs/<task>/<seed>/<run_id>/run_info.yaml         (older nested)
+
+    We intentionally avoid a full recursive rglob because logs/ can contain very
+    large wandb media trees; run_info.yaml is always near the top of each run dir.
+    """
+    patterns = (
+        "*/run_info.yaml",
+        "*/*/run_info.yaml",
+        "*/*/*/run_info.yaml",
+    )
+    paths: List[Path] = []
+    for pat in patterns:
+        paths.extend(logs_dir.glob(pat))
+    # Deduplicate and sort for stable scans.
+    return sorted(set(paths), key=lambda p: str(p))
+
+
 def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
     pd = require_pandas()
     logs_dir = logs_dir.expanduser().resolve()
@@ -72,10 +95,10 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
 
     sys.stderr.write(f"Scanning local logs ({logs_dir})...\n")
     rows: List[dict] = []
-    run_dirs = sorted(logs_dir.glob("*/run_info.yaml"))
-    total = len(run_dirs)
+    run_info_paths = iter_run_info_paths(logs_dir)
+    total = len(run_info_paths)
     
-    for idx, run_info_path in enumerate(run_dirs):
+    for idx, run_info_path in enumerate(run_info_paths):
         if limit is not None and idx >= limit:
             break
         

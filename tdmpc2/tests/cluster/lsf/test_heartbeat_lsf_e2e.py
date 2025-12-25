@@ -3,7 +3,7 @@
 End-to-end test for the heartbeat system on LSF cluster.
 
 This script acts as a "watcher" that validates the heartbeat contract from issue #5:
-- File appears within 60s at logs/<run_id>/heartbeat.json
+- File appears within 60s at logs/<task>/<run_id>/heartbeat.json (or legacy logs/<run_id>/heartbeat.json)
 - Atomic writes (no partial JSON / decode errors)
 - Updates every ~30s
 - progress.step is non-decreasing and increases during training
@@ -79,6 +79,8 @@ class HeartbeatWatcher:
         self.logs_dir = Path(logs_dir)
         self.run_id = run_id
         self.verbose = verbose
+        # Resolved directory containing heartbeat.json (supports task-first and legacy layouts)
+        self.run_dir: Optional[Path] = None
 
         # Collected data
         self.heartbeats: List[Dict[str, Any]] = []
@@ -92,7 +94,12 @@ class HeartbeatWatcher:
             print(f"[watcher] {msg}", flush=True)
 
     def discover_run_id(self, start_time: float, timeout: float = FILE_APPEAR_TIMEOUT) -> Optional[str]:
-        """Discover the run_id by finding the newest logs directory created after start_time."""
+        """Discover run_id by finding the newest run directory created after start_time.
+
+        Supports both:
+          - legacy run-first: logs/<run_id>/
+          - task-first:       logs/<task>/<run_id>/
+        """
         deadline = time.time() + timeout
         self.log(f"Discovering run_id (waiting up to {timeout}s for new logs dir)...")
 
@@ -101,29 +108,70 @@ class HeartbeatWatcher:
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            # Find directories created after start_time
-            candidates = []
-            for d in self.logs_dir.iterdir():
-                if d.is_dir():
-                    try:
-                        ctime = d.stat().st_ctime
-                        if ctime >= start_time:
-                            candidates.append((ctime, d.name))
-                    except OSError:
-                        pass
+            # Prefer looking for run_info.yaml near the top of each run dir to avoid
+            # descending into large wandb media trees.
+            run_info_paths = []
+            for pat in ("*/run_info.yaml", "*/*/run_info.yaml", "*/*/*/run_info.yaml"):
+                run_info_paths.extend(self.logs_dir.glob(pat))
+
+            # Find run directories created after start_time
+            candidates: List[tuple[float, Path]] = []
+            for run_info_path in run_info_paths:
+                run_dir = run_info_path.parent
+                try:
+                    ctime = run_dir.stat().st_ctime
+                    if ctime >= start_time:
+                        candidates.append((ctime, run_dir))
+                except OSError:
+                    pass
 
             if candidates:
-                candidates.sort(reverse=True)
-                run_id = candidates[0][1]
-                self.log(f"Discovered run_id: {run_id}")
-                return run_id
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                run_dir = candidates[0][1]
+                self.run_dir = run_dir
+                self.run_id = run_dir.name
+                self.log(f"Discovered run_id: {self.run_id} (run_dir={run_dir})")
+                return self.run_id
 
             time.sleep(POLL_INTERVAL)
 
         return None
 
+    def _resolve_run_dir(self) -> Optional[Path]:
+        """Resolve the directory containing this run's artifacts (heartbeat/run_info).
+
+        If run_id is set, try:
+          1) logs/<run_id>/              (legacy)
+          2) logs/*/<run_id>/            (task-first)
+          3) logs/*/*/<run_id>/          (older nested)
+        """
+        if self.run_id is None:
+            return None
+        if self.run_dir is not None and self.run_dir.is_dir() and self.run_dir.name == self.run_id:
+            return self.run_dir
+
+        legacy = self.logs_dir / self.run_id
+        if legacy.is_dir():
+            self.run_dir = legacy
+            return legacy
+
+        matches: List[Path] = []
+        for pat in (f"*/{self.run_id}", f"*/*/{self.run_id}"):
+            for p in self.logs_dir.glob(pat):
+                if p.is_dir():
+                    matches.append(p)
+        if matches:
+            matches.sort(key=lambda p: p.stat().st_ctime, reverse=True)
+            self.run_dir = matches[0]
+            return self.run_dir
+        return None
+
     def get_heartbeat_path(self) -> Path:
         assert self.run_id is not None
+        run_dir = self._resolve_run_dir()
+        if run_dir is not None:
+            return run_dir / "heartbeat.json"
+        # Fallback to legacy path (may not exist)
         return self.logs_dir / self.run_id / "heartbeat.json"
 
     def wait_for_file(self, timeout: float = FILE_APPEAR_TIMEOUT) -> bool:

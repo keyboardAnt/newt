@@ -86,7 +86,20 @@ def parse_step(p: Path):
 
 candidates = []
 
-# Run-first layout: logs/<timestamp>_expert_<task>/checkpoints/<step>.pt
+# Task-first layout: logs/<task>/<run_id>/checkpoints/<step>.pt
+task_dir = logs_dir / task
+if task_dir.is_dir():
+    for p in task_dir.glob("*/checkpoints/*.pt"):
+        step = parse_step(p)
+        if step is not None:
+            candidates.append((step, p.resolve()))
+    # Older nested: logs/<task>/<seed>/<run_id>/checkpoints/<step>.pt
+    for p in task_dir.glob("*/*/checkpoints/*.pt"):
+        step = parse_step(p)
+        if step is not None:
+            candidates.append((step, p.resolve()))
+
+# Legacy run-first layout: logs/<timestamp>_expert_<task>/checkpoints/<step>.pt
 # Match exact task to avoid accidental prefix matches
 # (e.g. mw-plate-slide vs mw-plate-slide-back-side, mw-button-press-topdown vs mw-button-press-topdown-wall).
 for run_dir in logs_dir.glob("*_expert_*"):
@@ -100,14 +113,6 @@ for run_dir in logs_dir.glob("*_expert_*"):
     if not ckpt_dir.is_dir():
         continue
     for p in ckpt_dir.glob("*.pt"):
-        step = parse_step(p)
-        if step is not None:
-            candidates.append((step, p.resolve()))
-
-# Legacy layout: logs/<task>/**/checkpoints/<step>.pt
-task_dir = logs_dir / task
-if task_dir.is_dir():
-    for p in task_dir.glob("**/checkpoints/*.pt"):
         step = parse_step(p)
         if step is not None:
             candidates.append((step, p.resolve()))

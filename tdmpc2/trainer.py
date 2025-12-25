@@ -94,6 +94,33 @@ class Trainer():
 			steps_per_second=self._step / elapsed_time
 		)
 
+    def _prune_old_checkpoints(self, keep_identifier: str) -> None:
+        """Prune step-based checkpoints, keeping only the latest (plus its trainer state).
+
+        This is a disk-usage safety valve for long runs that would otherwise accumulate
+        dozens of large checkpoint files.
+        """
+        if not hasattr(self.logger, "_model_dir") or not self.logger._model_dir:
+            return
+        ckpt_dir = Path(self.logger._model_dir)
+        if not ckpt_dir.is_dir():
+            return
+
+        keep_names = {f"{keep_identifier}.pt", f"{keep_identifier}_trainer.pt"}
+        for p in ckpt_dir.glob("*.pt"):
+            if p.name in keep_names:
+                continue
+
+            stem = p.stem
+            # Agent checkpoints: "<step>.pt" where step is digits with optional underscores.
+            if stem.replace("_", "").isdigit():
+                p.unlink(missing_ok=True)
+                continue
+            # Trainer state checkpoints: "<step>_trainer.pt"
+            if stem.endswith("_trainer") and stem[:-8].replace("_", "").isdigit():
+                p.unlink(missing_ok=True)
+                continue
+
     def save_checkpoint(self, identifier=None):
         """Save a checkpoint for resuming training later."""
         if identifier is None:
@@ -118,6 +145,10 @@ class Trainer():
             # Update heartbeat with checkpoint info (use agent checkpoint path)
             agent_ckpt_path = Path(self.logger._model_dir) / f'{identifier}.pt'
             self._heartbeat.update_checkpoint(self._step, str(agent_ckpt_path))
+
+            # Optional retention policy: keep only the latest checkpoint.
+            if getattr(self.cfg, "keep_latest_checkpoint_only", False):
+                self._prune_old_checkpoints(identifier)
 
             if self.cfg.rank == 0:
                 print(

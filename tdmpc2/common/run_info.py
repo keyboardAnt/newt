@@ -13,8 +13,12 @@ def extract_parent_run_id(checkpoint_path: Path) -> str | None:
     """
     Extract parent_run_id from a checkpoint path.
 
-    Checkpoint paths follow the convention: logs/{run_id}/checkpoints/{step}.pt
-    The run_id is the directory name containing 'checkpoints'.
+    Checkpoint paths follow the convention:
+      - logs/<task>/<run_id>/checkpoints/<step>.pt (task-first)
+      - logs/<run_id>/checkpoints/<step>.pt        (legacy run-first)
+
+    The run_id is the directory name containing 'checkpoints' (i.e., the parent
+    directory of the 'checkpoints' folder).
 
     Args:
         checkpoint_path: Path to the checkpoint file.

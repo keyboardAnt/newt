@@ -21,17 +21,17 @@ from discover import parse_step
 def find_best_checkpoint_for_task(logs_dir: Path, task: str) -> Path | None:
     """Find the best checkpoint for a given task across all runs."""
     candidates = []
-    for run_dir in logs_dir.iterdir():
-        if not run_dir.is_dir():
-            continue
-        run_info_path = run_dir / "run_info.yaml"
-        if run_info_path.exists():
-            info = yaml.safe_load(run_info_path.read_text()) or {}
-            tasks = info.get("tasks", [info.get("task")])
-            if task in tasks:
-                for ckpt in (run_dir / "checkpoints").glob("*.pt"):
-                    if not ckpt.stem.endswith('_trainer'):
-                        candidates.append(ckpt)
+    run_info_paths = []
+    for pat in ("*/run_info.yaml", "*/*/run_info.yaml", "*/*/*/run_info.yaml"):
+        run_info_paths.extend(logs_dir.glob(pat))
+    for run_info_path in run_info_paths:
+        run_dir = run_info_path.parent
+        info = yaml.safe_load(run_info_path.read_text()) or {}
+        tasks = info.get("tasks", [info.get("task")])
+        if task in tasks:
+            for ckpt in (run_dir / "checkpoints").glob("*.pt"):
+                if not ckpt.stem.endswith('_trainer'):
+                    candidates.append(ckpt)
     return max(candidates, key=parse_step) if candidates else None
 
 

@@ -99,6 +99,9 @@ class Config:
 	wandb_project: str = "mmbench"
 	wandb_entity: str = "wm-planning"
 	enable_wandb: bool = True
+	# Keep only the most recent checkpoint in work_dir/checkpoints to reduce disk usage.
+	# Set to False to keep all checkpoints.
+	keep_latest_checkpoint_only: bool = True
 
 	# misc
 	multiproc: bool = False
@@ -145,12 +148,14 @@ def parse_cfg(cfg):
 	"""
 	Parses the experiment config dataclass. Mostly for convenience.
 	"""
-	# Generate timestamp-based run directory (run-first structure)
-	# All artifacts for a run live under logs/<run_id>/, regardless of task count
+	# Generate timestamp-based run directory (task-first structure)
+	# All artifacts for a run live under logs/<task>/<run_id>/.
 	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 	run_name = f"{timestamp}_{cfg.exp_name}" if cfg.exp_name != "default" else timestamp
 	cfg.run_id = run_name
-	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / run_name
+	# Guard against accidental path separators in task names
+	task_dir = str(cfg.task).replace("/", "-")
+	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / "logs" / task_dir / run_name
 	cfg.task_title = cfg.task.replace("-", " ").title()
 	cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins-1)  # Bin size for discrete regression
 
