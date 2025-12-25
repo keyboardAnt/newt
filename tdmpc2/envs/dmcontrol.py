@@ -71,7 +71,9 @@ class DMControlWrapper:
 		action = action.astype(self.action_spec_dtype)
 		for _ in range(2):
 			step = self.env.step(action)
-			reward += step.reward
+			# Handle None reward (can occur in first step after reset for some DMControl tasks)
+			step_reward = step.reward if step.reward is not None else 0.0
+			reward += step_reward
 		self._cumulative_reward += reward
 		return self._obs_to_array(step.observation), reward, False, False, self.info
 	

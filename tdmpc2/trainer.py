@@ -360,6 +360,16 @@ class Trainer():
         if self.cfg.rank == 0:
             print(f'Training agent for {self.cfg.steps:,} steps...')
         train_metrics = defaultdict(list)
+
+        # Initialize episode state before entering the loop.
+        # This is required because resumed runs may not hit the eval block on the first iteration.
+        obs, info = self.env.reset()
+        ep_reward = torch.zeros((self.cfg.num_envs,))
+        ep_len = torch.zeros((self.cfg.num_envs,), dtype=torch.int32)
+        done = torch.full((self.cfg.num_envs,), True, dtype=torch.bool)
+        self._next_action = None
+        self._tds[ep_len] = self.to_td(obs)
+
         while self._step <= self.cfg.steps:
 
             # Evaluate agent periodically

@@ -313,18 +313,38 @@ class ManiSkillWrapper(gym.Wrapper):
 			env.reset(options=dict(reconfigure=True))
 
 	def _extract_info(self, info):
-		info = {
-			'terminated': info.get('terminated', False),
-			'truncated': info.get('truncated', False),
-			'success': float(info.get('success', 0.)),
+		# Extract only primitive/numpy values to ensure picklability across process boundaries.
+		# ManiSkill info dicts can contain SAPIEN objects with private attributes that fail in AsyncVectorEnv.
+		def _to_primitive(v):
+			"""Convert value to a primitive type safe for multiprocessing."""
+			if v is None:
+				return 0.0
+			if isinstance(v, (bool, int, float, str)):
+				return v
+			if isinstance(v, np.ndarray):
+				return float(v.item()) if v.size == 1 else v.tolist()
+			if hasattr(v, 'item'):  # torch tensor or similar
+				return float(v.item())
+			if hasattr(v, 'cpu'):  # torch tensor
+				return float(v.cpu().item())
+			# Fallback: try to convert to float, else return 0
+			try:
+				return float(v)
+			except (TypeError, ValueError):
+				return 0.0
+
+		out = {
+			'terminated': bool(info.get('terminated', False)),
+			'truncated': bool(info.get('truncated', False)),
+			'success': _to_primitive(info.get('success', 0.)),
 		}
 		if 'cartpole' in self.cfg.task:
-			info['score'] = self._cumulative_reward/1000
+			out['score'] = self._cumulative_reward/1000
 		elif 'hopper' in self.cfg.task:
-			info['score'] = self._cumulative_reward/600
+			out['score'] = self._cumulative_reward/600
 		else:
-			info['score'] = info['success']
-		return info
+			out['score'] = out['success']
+		return out
 
 	def get_observation(self, obs):
 		if self.cfg.obs == 'state':
