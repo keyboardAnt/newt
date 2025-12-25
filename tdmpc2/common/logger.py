@@ -159,12 +159,25 @@ class Logger:
 			fp = self._model_dir / f'{str(identifier)}.pt'
 			agent.save(fp)
 			if self._wandb:
-				artifact = self._wandb.Artifact(
-					self._group + '-' + str(self._seed) + '-' + str(identifier),
-					type='model',
-				)
-				artifact.add_file(fp)
-				self._wandb.log_artifact(artifact)
+				# Best-effort: artifact logging should never crash training/checkpointing.
+				try:
+					# Guard against calls after wandb.finish() (wandb.run becomes None).
+					if getattr(self._wandb, "run", None) is None:
+						return
+					artifact = self._wandb.Artifact(
+						self._group + '-' + str(self._seed) + '-' + str(identifier),
+						type='model',
+					)
+					artifact.add_file(fp)
+					self._wandb.log_artifact(artifact)
+				except Exception as e:
+					print(
+						colored(
+							f"[Logger] W&B artifact logging failed (continuing): {repr(e)}",
+							"yellow",
+							attrs=["bold"],
+						)
+					)
 
 	def finish(self, agent=None, exit_code=None):
 		if agent is not None:
@@ -176,6 +189,10 @@ class Logger:
 			except TypeError:
 				# Older wandb versions may not accept exit_code
 				self._wandb.finish()
+			finally:
+				# Prevent any later best-effort checkpoint saves from trying to talk to W&B.
+				self._wandb = None
+				self._video = None
 
 	def _format(self, key, value, ty):
 		if ty == "int":

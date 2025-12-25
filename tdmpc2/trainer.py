@@ -50,6 +50,11 @@ class Trainer():
         self._update_freq = self.cfg.num_envs * self.cfg.episode_length * self.cfg.world_size
         self._update_tokens = 0
         self._eps_per_update_freq = int((cfg.episode_length / np.array(cfg.episode_lengths)).sum())
+        # Training "cycle" alignment:
+        # - Episodes always start from a fresh env.reset() at (re)start and after eval resets.
+        # - When resuming from checkpoints whose step is not a multiple of _update_freq (e.g. *_014),
+        #   we must align logging to the cycle start step rather than absolute step==0.
+        self._train_cycle_start_step = 0
 
         # Adaptive UTD scaling
         self._auto_utd = AdaptiveUTD(
@@ -364,6 +369,9 @@ class Trainer():
         # Initialize episode state before entering the loop.
         # This is required because resumed runs may not hit the eval block on the first iteration.
         obs, info = self.env.reset()
+        # Cycle start is defined by the most recent full env.reset() across all envs.
+        # This keeps logging/checks robust when resuming from checkpoints saved at arbitrary steps.
+        self._train_cycle_start_step = self._step
         ep_reward = torch.zeros((self.cfg.num_envs,))
         ep_len = torch.zeros((self.cfg.num_envs,), dtype=torch.int32)
         done = torch.full((self.cfg.num_envs,), True, dtype=torch.bool)
@@ -391,6 +399,8 @@ class Trainer():
 
                 # Reset environment and metrics
                 obs, info = self.env.reset()
+                # Eval performs a full reset; restart the cycle alignment from here.
+                self._train_cycle_start_step = self._step
                 ep_reward = torch.zeros((self.cfg.num_envs,))
                 ep_len = torch.zeros((self.cfg.num_envs,), dtype=torch.int32)
                 done = torch.full((self.cfg.num_envs,), True, dtype=torch.bool)
@@ -448,8 +458,11 @@ class Trainer():
 
                 # Log and reset metrics if enough data is collected
                 if max_ep_len >= self.cfg.episode_length:
-                    assert self._step % self._update_freq == 0, \
-						f'Step {self._step} is not a multiple of update frequency {self._update_freq}.'
+                    assert (self._step - self._train_cycle_start_step) % self._update_freq == 0, \
+						(
+							f'Step {self._step} is not aligned with update frequency {self._update_freq} '
+							f'(cycle_start_step={self._train_cycle_start_step}).'
+						)
                     self._ep_idx += self._eps_per_update_freq
                     for key in ['episode_reward', 'episode_success', 'episode_score', 'episode_length', 'episode_terminated']:
                         train_metrics[key] = torch.tensor(train_metrics[key], dtype=torch.float32).nanmean().item()

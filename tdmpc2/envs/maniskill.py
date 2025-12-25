@@ -4,6 +4,9 @@ warnings.filterwarnings('ignore')
 # Disable SAPIEN renderer before importing ManiSkill (prevents Vulkan errors in Docker)
 import os
 os.environ.setdefault('SAPIEN_NO_DISPLAY', '1')
+# On shared clusters / exclusive-process GPUs, SAPIEN's ray tracing path can conflict with
+# external CUDA programs (e.g. PyTorch). Disable ray tracing to avoid Vulkan init failures.
+os.environ.setdefault('SAPIEN_DISABLE_RAY_TRACING', '1')
 
 import gymnasium as gym
 import numpy as np
