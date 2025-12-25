@@ -1,7 +1,6 @@
 # Newt
 outputs/
 logs/
-.vscode/
 .nfs*  # NFS stale file handles
 
 # HF checkpoints
