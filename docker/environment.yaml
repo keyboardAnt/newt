@@ -25,6 +25,7 @@ dependencies:
     - omegaconf==2.3.0
     - metaworld @ git+https://github.com/nicklashansen/metaworld.git
     - mani_skill-nightly==2025.9.19.39
+    - moviepy==1.0.3
     - mujoco==3.3.6
     - numpy==1.24.4
     - pandas==2.3.3
@@ -42,4 +43,4 @@ dependencies:
     - kornia==0.8.1
     - termcolor==3.1.0
     - tqdm==4.67.1
-    - wandb[media]==0.22.1  # includes moviepy and friends for wandb.Video
+    - wandb[media]==0.22.1
