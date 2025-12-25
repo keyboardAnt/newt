@@ -351,13 +351,9 @@ def cmd_restart(args) -> int:
         else:
             idx_str = ','.join(str(i) for i in sorted(indices))
         
-        # Use shared/default GPU mode.
-        #
-        # Rationale: On this cluster, requesting EXCLUSIVE_PROCESS frequently causes
-        # immediate CUDA init failures ("device(s) busy or unavailable") when the GPU
-        # already has a context (or the scheduler's exclusivity isn't perfectly enforced).
-        # Shared mode avoids fail-fast at startup; true OOMs are handled separately.
-        gpu_spec = '"num=1"'
+        # Use exclusive GPU mode to avoid runtime OOMs caused by GPU sharing.
+        # (Jobs do a best-effort preflight wait in run_expert_task.sh.)
+        gpu_spec = '"num=1:mode=exclusive_process"'
         
         return f'''bsub -J "newt-expert[{idx_str}]" \\
   -q {queue} \\

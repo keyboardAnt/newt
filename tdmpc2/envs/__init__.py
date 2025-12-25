@@ -6,7 +6,6 @@ import gymnasium as gym
 from envs.wrappers.vectorized_multitask import make_vectorized_multitask_env
 from envs.wrappers.render import Render
 from envs.dmcontrol import make_env as make_dm_control_env
-from envs.maniskill import make_env as make_maniskill_env
 from envs.metaworld import make_env as make_metaworld_env
 from envs.mujoco import make_env as make_mujoco_env
 from envs.box2d import make_env as make_box2d_env
@@ -25,11 +24,21 @@ def make_env(cfg):
 		env = make_vectorized_multitask_env(cfg, make_env)
 	else:
 		env = None
-		for fn in [
-			make_dm_control_env, make_maniskill_env, make_metaworld_env,
+		# Avoid importing heavy/optional deps (e.g. ManiSkill/SAPIEN) unless needed.
+		# This prevents non-ManiSkill tasks from failing at import-time when ManiSkill
+		# deps are missing or incompatible on some nodes.
+		fns = []
+		if str(cfg.task).startswith('ms-'):
+			from envs.maniskill import make_env as make_maniskill_env
+			fns.append(make_maniskill_env)
+
+		fns.extend([
+			make_dm_control_env, make_metaworld_env,
 			make_mujoco_env, make_box2d_env, make_robodesk_env,
 			make_ogbench_env, make_pygame_env, make_atari_env,
-		]:
+		])
+
+		for fn in fns:
 			try:
 				env = fn(cfg)
 				break

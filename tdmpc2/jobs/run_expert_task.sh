@@ -21,11 +21,6 @@ elif [[ -n "${LSB_GPU_ALLOC:-}" ]]; then
   fi
 fi
 
-# Make NVIDIA_VISIBLE_DEVICES consistent for libraries that key off it (e.g. Vulkan/SAPIEN).
-if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  export NVIDIA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}"
-fi
-
 # Diagnostics: show GPU environment (helps debug "device busy" errors)
 echo "=== GPU environment ==="
 echo "hostname: $(hostname)"
@@ -45,16 +40,23 @@ if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
     while true; do
       # List compute PIDs on the target GPU; empty output means no compute clients.
       PIDS="$(nvidia-smi -i "${PHYS_GPU}" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | tr '\n' ',' || true)"
+      # Also check used memory to catch non-compute contexts that still occupy VRAM.
+      MEM_USED="$(nvidia-smi -i "${PHYS_GPU}" --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' | head -1 || true)"
       if [[ -z "${PIDS}" ]]; then
+        if [[ "${MEM_USED}" =~ ^[0-9]+$ ]] && (( MEM_USED > 1024 )); then
+          echo "GPU preflight: GPU ${PHYS_GPU} has ${MEM_USED} MiB in use -> sleeping 30s"
+          sleep 30
+          continue
+        fi
         echo "GPU preflight: GPU ${PHYS_GPU} appears free."
         break
       fi
       NOW=$(date +%s)
       if (( NOW >= DEADLINE )); then
-        echo "GPU preflight: timeout waiting for GPU ${PHYS_GPU} (pids=${PIDS}). Proceeding anyway."
+        echo "GPU preflight: timeout waiting for GPU ${PHYS_GPU} (pids=${PIDS}, mem_used=${MEM_USED}MiB). Proceeding anyway."
         break
       fi
-      echo "GPU preflight: GPU ${PHYS_GPU} busy (pids=${PIDS}) -> sleeping 30s"
+      echo "GPU preflight: GPU ${PHYS_GPU} busy (pids=${PIDS}, mem_used=${MEM_USED}MiB) -> sleeping 30s"
       sleep 30
     done
   fi
