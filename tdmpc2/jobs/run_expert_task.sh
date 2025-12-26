@@ -5,6 +5,21 @@ set -euo pipefail
 
 cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 
+# Get task name from tasks.py (ensures consistent filtering of variant tasks)
+TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
+
+# Create a deterministic work_dir for this run up-front so we can capture LSF stdout/stderr there.
+# We pass run_id/work_dir into Hydra so train.py uses exactly this directory.
+RUN_TS="$(date +%Y%m%d_%H%M%S)"
+EXP_NAME="expert_${TASK}"
+RUN_ID="${RUN_TS}_${EXP_NAME}"
+WORK_DIR="/home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/${TASK}/${RUN_ID}"
+mkdir -p "${WORK_DIR}"
+
+# Capture everything from this point onward into the run directory as well.
+# (LSF will still write its own -o/-e file; this makes per-run debugging much easier.)
+exec > >(tee -a "${WORK_DIR}/lsf.log") 2>&1
+
 # =============================================================================
 # GPU BINDING: Ensure only the LSF-assigned GPU is visible to CUDA/PyTorch.
 # LSF sets CUDA_VISIBLE_DEVICES when using -gpu with exclusive mode, but inside
@@ -62,9 +77,8 @@ if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   fi
 fi
 
-# Get task name from tasks.py (ensures consistent filtering of variant tasks)
-TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
+echo "Work dir: ${WORK_DIR}"
 
 # Auto-resume from the latest available checkpoint for this task (if any).
 # This makes restarts robust even if the submit script doesn't explicitly pass checkpoint=...
@@ -137,7 +151,9 @@ ARGS=(
   env_mode=sync
   use_demos=False
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json
-  exp_name="expert_${TASK}"
+  exp_name="${EXP_NAME}"
+  run_id="${RUN_ID}"
+  work_dir="${WORK_DIR}"
   save_video=False
   compile=False
 )

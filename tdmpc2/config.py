@@ -148,14 +148,38 @@ def parse_cfg(cfg):
 	"""
 	Parses the experiment config dataclass. Mostly for convenience.
 	"""
-	# Generate timestamp-based run directory (task-first structure)
+	# Generate (or honor provided) run identifiers and work directory.
 	# All artifacts for a run live under logs/<task>/<run_id>/.
-	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-	run_name = f"{timestamp}_{cfg.exp_name}" if cfg.exp_name != "default" else timestamp
-	cfg.run_id = run_name
+	#
+	# Note: For cluster wrappers (e.g., LSF), it's useful to pre-create a work_dir
+	# so stdout/stderr can be redirected there from the very beginning. In that
+	# case, pass work_dir=... (and optionally run_id=...) and we will honor it.
+	orig_cwd = Path(hydra.utils.get_original_cwd())
 	# Guard against accidental path separators in task names
 	task_dir = str(cfg.task).replace("/", "-")
-	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / "logs" / task_dir / run_name
+
+	# If a work_dir was provided, normalize it and (if needed) infer run_id from it.
+	if cfg.work_dir is not None:
+		work_dir_p = Path(str(cfg.work_dir))
+		if not work_dir_p.is_absolute():
+			work_dir_p = orig_cwd / work_dir_p
+		cfg.work_dir = work_dir_p
+		if cfg.run_id is None:
+			cfg.run_id = cfg.work_dir.name
+
+	# If run_id not provided, generate timestamp-based run_id (optionally suffixed by exp_name).
+	if cfg.run_id is None:
+		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+		run_name = f"{timestamp}_{cfg.exp_name}" if cfg.exp_name != "default" else timestamp
+		cfg.run_id = run_name
+
+	# Finalize work_dir if still not set.
+	if cfg.work_dir is None:
+		# Keep run_id as a directory name; guard against path separators.
+		run_name = str(cfg.run_id).replace("/", "-")
+		cfg.run_id = run_name
+		cfg.work_dir = orig_cwd / "logs" / task_dir / run_name
+
 	cfg.task_title = cfg.task.replace("-", " ").title()
 	cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins-1)  # Bin size for discrete regression
 
