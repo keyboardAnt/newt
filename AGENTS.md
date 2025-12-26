@@ -1,0 +1,1 @@
+To load the environment, run `module load miniconda/24.11_environmentally && conda activate newt && ...` first.

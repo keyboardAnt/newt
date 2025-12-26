@@ -9,6 +9,22 @@ cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
 
 # =============================================================================
+# SIGNAL HANDLING: Propagate SIGTERM to child processes
+# This prevents orphaned python processes when LSF preempts/kills the job.
+# =============================================================================
+CURRENT_PID=""
+_term() { 
+  echo "Caught SIGTERM/SIGINT signal!" 
+  if [[ -n "${CURRENT_PID}" ]]; then
+    echo "Forwarding signal to child PID ${CURRENT_PID}..."
+    kill -TERM "${CURRENT_PID}" 2>/dev/null
+    wait "${CURRENT_PID}"
+  fi
+  exit 143
+}
+trap _term SIGTERM SIGINT
+
+# =============================================================================
 # RETRY POLICY
 # =============================================================================
 # Note: `bsub -r` does NOT reliably retry application-level crashes on many LSF setups
@@ -211,12 +227,18 @@ while (( ATTEMPT <= MAX_ATTEMPTS )); do
     ARGS_ATTEMPT+=(checkpoint="${CKPT}")
   fi
 
-  if python train.py "${ARGS_ATTEMPT[@]}"; then
+  # Run in background to allow signal trapping
+  python train.py "${ARGS_ATTEMPT[@]}" &
+  CURRENT_PID=$!
+  wait "${CURRENT_PID}"
+  EXIT_CODE=$?
+  CURRENT_PID=""
+
+  if (( EXIT_CODE == 0 )); then
     echo "train.py completed successfully."
     break
   fi
 
-  EXIT_CODE=$?
   echo "train.py crashed/failed with exit code ${EXIT_CODE}."
 
   if (( ATTEMPT >= MAX_ATTEMPTS )); then
