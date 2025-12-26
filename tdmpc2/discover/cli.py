@@ -565,7 +565,7 @@ def cmd_cleanup_models(args) -> int:
         project_path=args.wandb_project,
         protect_aliases=args.protect_alias,
         name_regex=args.name_regex,
-        exact_collections=args.collection,
+        exact_collections=getattr(args, "artifact_name", None) or getattr(args, "collection", None),
         max_collections=args.max_collections,
     )
     print_cleanup_plan(plan)
@@ -696,10 +696,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help='Optional regex filter on artifact *collection* name (process only matches; speeds up scans a lot)',
     )
     p_cleanup.add_argument(
-        '--collection',
+        '--artifact-name',
+        '--collection',  # deprecated alias (W&B term); keep for backwards compatibility
         action='append',
         default=None,
-        help='Exact artifact collection name to process (repeatable). Avoids project-wide scan.',
+        help='Exact W&B artifact base name to process (repeatable, without :vN). Avoids project-wide scan.',
     )
     p_cleanup.add_argument(
         '--max-collections',

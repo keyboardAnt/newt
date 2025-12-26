@@ -80,6 +80,9 @@ Training logs checkpoints to W&B as artifacts of type `model`, with names that i
 entries. The `cleanup-models` command keeps only the **max-step** checkpoint per
 `<task>-<exp_name>-<seed>` and deletes the rest.
 
+Tip: if you want to target a specific checkpoint name without scanning the whole project, use
+`--artifact-name <name>` (the artifact base name without `:vN`). This is much faster than regex scans.
+
 - **Dry-run**:
 
 ```bash
