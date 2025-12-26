@@ -200,7 +200,7 @@ def generate_eval_script(
             return None
 
         task_list_path = output_dir / f"tasks_need_eval{suffix}.txt"
-        task_list_path.write_text("\n".join(task_subset) + "\n")
+        task_list_path.write_text("\n".join(sorted(task_subset)) + "\n")
         print(f"✅ Written task list to: {task_list_path}")
         print(f"   ({len(task_subset)} tasks)")
 

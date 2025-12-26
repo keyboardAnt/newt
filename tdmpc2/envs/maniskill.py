@@ -387,23 +387,25 @@ def make_env(cfg):
 	task_cfg = MANISKILL_TASKS[cfg.task]
 	# Only enable rendering when video saving is requested (avoids GPU buffer errors in headless envs)
 	render_mode = 'rgb_array' if cfg.get('save_video', False) else None
-	# Disable renderer entirely when not recording video.
-	# ManiSkill-nightly supports render_backend="none", which avoids Vulkan/SAPIEN
-	# RenderSystem initialization (common cluster failure: "supported physical device cuda:0").
-	render_backend = None if render_mode else "none"
-	
-	env = gym.make(
-		task_cfg['env'],
+	# Disable renderer entirely when not recording video. When recording video, DO NOT pass
+	# render_backend=None (ManiSkill expects a string and will crash on None).
+	#
+	# ManiSkill supports render_backend="none", which avoids Vulkan/SAPIEN RenderSystem init
+	# (common cluster failure: "supported physical device cuda:0") when we don't need frames.
+	make_kwargs = dict(
 		obs_mode='state',
 		control_mode=task_cfg['control_mode'],
 		num_envs=1,
 		render_mode=render_mode,
-		render_backend=render_backend,
 		sensor_configs=dict(width=cfg.render_size, height=cfg.render_size) if render_mode else None,
 		human_render_camera_configs=dict(width=cfg.render_size, height=cfg.render_size) if render_mode else None,
 		reconfiguration_freq=None,
 		sim_backend='auto',
 	)
+	if not render_mode:
+		make_kwargs['render_backend'] = "none"
+
+	env = gym.make(task_cfg['env'], **make_kwargs)
 	env = CPUGymWrapper(env, ignore_terminations=True)
 	env = ManiSkillWrapper(env, cfg)
 	env = Timeout(env, max_episode_steps=task_cfg['max_episode_steps'])

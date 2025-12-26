@@ -2,10 +2,10 @@ ms-pick-cube-xarm6
 ms-pick-knife
 ms-pick-tennis-ball
 ms-pick-baseball
-ms-push-can
-ms-push-pear
 ms-push-banana
+ms-push-can
 ms-push-apple
+ms-push-pear
 ms-push-rubiks-cube
 ms-push-sponge
 ms-push-screwdriver
