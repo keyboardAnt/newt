@@ -31,8 +31,6 @@ from .plots import (
     training_overview, plot_max_steps, tasks_needing_attention, progress_by_domain,
     running_runs_summary, tasks_needing_restart, currently_running_tasks,
     stale_wandb_runs, stale_run_details,
-    # Aliases for backwards compatibility
-    duplicate_running_runs, duplicate_run_details,
 )
 from .eval import tasks_ready_for_eval, generate_eval_script, collect_videos, download_wandb_videos, prune_old_videos
 
@@ -75,9 +73,6 @@ __all__ = [
     'currently_running_tasks',
     'stale_wandb_runs',
     'stale_run_details',
-    # Aliases for backwards compatibility
-    'duplicate_running_runs',
-    'duplicate_run_details',
     # eval
     'tasks_ready_for_eval',
     'generate_eval_script',

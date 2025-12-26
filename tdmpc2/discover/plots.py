@@ -465,8 +465,6 @@ def stale_wandb_runs(df: "pd.DataFrame") -> "pd.DataFrame":
     return stale.reset_index()
 
 
-# Keep old name as alias for backwards compatibility
-duplicate_running_runs = stale_wandb_runs
 
 
 def stale_run_details(df: "pd.DataFrame") -> "pd.DataFrame":
@@ -553,8 +551,6 @@ def stale_run_details(df: "pd.DataFrame") -> "pd.DataFrame":
     return result
 
 
-# Keep old name as alias for backwards compatibility
-duplicate_run_details = stale_run_details
 
 
 def currently_running_tasks(df: "pd.DataFrame", target_step: int = 5_000_000) -> "pd.DataFrame":
