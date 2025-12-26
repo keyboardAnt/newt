@@ -140,14 +140,23 @@ class Logger:
 		# Use task as the group (so all runs for a task cluster together).
 		run_name = str(getattr(cfg, "run_id", None) or cfg.seed)
 		job_type = getattr(cfg, "run_kind", None) or ("eval" if str(cfg.exp_name).startswith("eval_") else "train")
+		tags = cfg_to_group(cfg, return_list=True) + [
+			f"seed:{cfg.seed}", 
+			f"exp:{cfg.exp_name}", 
+			f"model:{getattr(cfg, 'model_size', 'none')}"
+		]
+		for i, tag in enumerate(tags):
+			if len(tag) > 64:
+				print(colored(f"Warning: tag '{tag}' is too long ({len(tag)} > 64). Truncating.", "yellow"))
+				tags[i] = tag[:64]
+
 		wandb.init(
 			project=self.project,
 			entity=self.entity,
 			name=run_name,
 			group=str(cfg.task),
 			job_type=str(job_type),
-			tags=cfg_to_group(cfg, return_list=True)
-				+ [f"seed:{cfg.seed}", f"exp:{cfg.exp_name}", f"model:{getattr(cfg, 'model_size', 'none')}"],
+			tags=tags,
 			dir=self._log_dir,
 			config=cfg,
 		)

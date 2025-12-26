@@ -171,32 +171,52 @@ def generate_eval_script(
     tasks: List[str],
     output_dir: Path,
     project_root: Path,
-) -> Optional[Tuple[Path, Path]]:
-    """Generate task list and LSF script to run eval on tasks without videos."""
+) -> Optional[List[Tuple[Path, Path]]]:
+    """Generate task list(s) + LSF script(s) to run eval on tasks without videos.
+
+    NOTE: LSF resource requirements (e.g. GPU mode) are fixed per submitted job. Since
+    ManiSkill tasks (ms-*) require *non-exclusive* GPU mode for SAPIEN/Vulkan, we split
+    the submission into two job arrays:
+      - non-ManiSkill tasks: exclusive GPU mode (num=1:mode=exclusive_process)
+      - ManiSkill tasks (ms-*): shared GPU mode (num=1)
+    """
     output_dir = Path(output_dir)
     
     if not tasks:
         print("✅ No tasks need evaluation - all have videos!")
         return None
-    
-    task_list_path = output_dir / 'tasks_need_eval.txt'
-    task_list_path.write_text('\n'.join(tasks) + '\n')
-    print(f"✅ Written task list to: {task_list_path}")
-    print(f"   ({len(tasks)} tasks)")
-    
-    lsf_script = f'''#!/bin/bash
+
+    ms_tasks = [t for t in tasks if str(t).startswith("ms-")]
+    non_ms_tasks = [t for t in tasks if not str(t).startswith("ms-")]
+
+    def _write_one(
+        *,
+        task_subset: List[str],
+        suffix: str,
+        gpu_spec: str,
+        job_name: str,
+    ) -> Optional[Tuple[Path, Path]]:
+        if not task_subset:
+            return None
+
+        task_list_path = output_dir / f"tasks_need_eval{suffix}.txt"
+        task_list_path.write_text("\n".join(task_subset) + "\n")
+        print(f"✅ Written task list to: {task_list_path}")
+        print(f"   ({len(task_subset)} tasks)")
+
+        lsf_script = f'''#!/bin/bash
 # Auto-generated eval script for tasks needing videos
 # Generated: {datetime.now().isoformat()}
-# Tasks: {len(tasks)}
+# Tasks: {len(task_subset)}
 
-#BSUB -J newt-eval-videos[1-{len(tasks)}]
+#BSUB -J {job_name}[1-{len(task_subset)}]
 #BSUB -q short-gpu
 #BSUB -n 1
-#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -gpu "{gpu_spec}"
 #BSUB -R "rusage[mem=16GB,tmp=10240]"  # tmp is MB; 10240 ~= 10 GiB
 #BSUB -W 04:00
-#BSUB -o {project_root}/logs/lsf/newt-eval-videos.%J.%I.log
-#BSUB -e {project_root}/logs/lsf/newt-eval-videos.%J.%I.log
+#BSUB -o {project_root}/logs/lsf/{job_name}.%J.%I.log
+#BSUB -e {project_root}/logs/lsf/{job_name}.%J.%I.log
 
 #BSUB -app nvidia-gpu
 #BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
@@ -205,11 +225,8 @@ cd {project_root}
 
 pip install -q "wandb[media]"
 
-TASK=$(sed -n "${{LSB_JOBINDEX}}p" jobs/tasks_need_eval.txt)
+TASK=$(sed -n "${{LSB_JOBINDEX}}p" jobs/{task_list_path.name})
 echo "LSF job index: ${{LSB_JOBINDEX}}, task: ${{TASK}}"
-
-# NOTE: ManiSkill tasks require non-exclusive GPU mode for SAPIEN/Vulkan.
-# If this fails for ms-* tasks, resubmit with: -gpu "num=1" instead of exclusive_process
 
 export TASK
 eval $(python - <<'PY'
@@ -263,15 +280,38 @@ python train.py \\
   env_mode=sync \\
   compile=False  # Keep disabled for eval (compilation overhead > 1-step runtime)
 '''
-    
-    lsf_path = output_dir / 'run_eval_need_videos.lsf'
-    lsf_path.write_text(lsf_script)
-    print(f"✅ Written LSF script to: {lsf_path}")
-    
+
+        lsf_path = output_dir / f"run_eval_need_videos{suffix}.lsf"
+        lsf_path.write_text(lsf_script)
+        print(f"✅ Written LSF script to: {lsf_path}")
+        return task_list_path, lsf_path
+
+    created: List[Tuple[Path, Path]] = []
+
+    # Non-ManiSkill jobs: keep exclusive GPU mode for stability / avoiding GPU sharing.
+    out = _write_one(
+        task_subset=non_ms_tasks,
+        suffix="",
+        gpu_spec="num=1:mode=exclusive_process",
+        job_name="newt-eval-videos",
+    )
+    if out:
+        created.append(out)
+
+    # ManiSkill jobs: MUST use shared GPU mode.
+    out = _write_one(
+        task_subset=ms_tasks,
+        suffix="_ms",
+        gpu_spec="num=1",
+        job_name="newt-eval-videos-ms",
+    )
+    if out:
+        created.append(out)
+
     print(f"\n📋 To submit the eval jobs:")
     print(f"   make submit-eval")
-    
-    return task_list_path, lsf_path
+
+    return created
 
 
 def prune_old_videos(output_dir: Path, dry_run: bool = False) -> List[Path]:

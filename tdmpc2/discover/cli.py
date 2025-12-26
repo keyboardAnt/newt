@@ -353,9 +353,12 @@ def cmd_restart(args) -> int:
         else:
             idx_str = ','.join(str(i) for i in sorted(indices))
         
-        # Use exclusive GPU mode to avoid runtime OOMs caused by GPU sharing.
-        # (Jobs do a best-effort preflight wait in run_expert_task.sh.)
-        gpu_spec = '"num=1:mode=exclusive_process"'
+        # Use exclusive GPU mode to avoid runtime OOMs caused by GPU sharing,
+        # unless shared mode is explicitly requested (e.g. for ManiSkill).
+        if gpu_mode == 'exclusive':
+            gpu_spec = '"num=1:mode=exclusive_process"'
+        else:
+            gpu_spec = '"num=1"'
         
         return f'''bsub -J "newt-expert[{idx_str}]" \\
   -q {queue} \\
@@ -376,8 +379,8 @@ def cmd_restart(args) -> int:
     
     if groups['long_shared']:
         indices = [idx for _, idx in groups['long_shared']]
-        cmd = format_bsub_cmd(indices, 'long-gpu', 'exclusive', '48:00')
-        commands.append(('long-gpu (exclusive/ManiSkill, 48h)', cmd, groups['long_shared']))
+        cmd = format_bsub_cmd(indices, 'long-gpu', 'shared', '48:00')
+        commands.append(('long-gpu (shared/ManiSkill, 48h)', cmd, groups['long_shared']))
     
     if groups['short_exclusive']:
         indices = [idx for _, idx in groups['short_exclusive']]
@@ -478,26 +481,36 @@ def cmd_eval(args) -> int:
         )
         
         if args.submit:
-            script_path = output_dir / 'run_eval_need_videos.lsf'
-            print(f"\nSubmitting eval jobs from {script_path}...")
-            # IMPORTANT: `bsub` reads the job script from stdin.
-            # Using `['bsub', '<', ...]` does NOT perform shell redirection; it makes bsub
-            # wait for stdin and appears to "hang". Feed the file via stdin instead.
-            try:
-                with script_path.open("rb") as f:
-                    result = subprocess.run(
-                        ["bsub"],
-                        stdin=f,
-                        capture_output=True,
-                        text=True,
-                    )
-            except OSError as e:
-                print(f"  ✗ Error opening script: {e}")
+            # Submit potentially multiple eval scripts (non-ms + ManiSkill split).
+            script_paths = [
+                output_dir / 'run_eval_need_videos.lsf',
+                output_dir / 'run_eval_need_videos_ms.lsf',
+            ]
+            script_paths = [p for p in script_paths if p.exists()]
+            if not script_paths:
+                print("\nNo eval scripts were generated; nothing to submit.")
                 return 1
-            if result.returncode == 0:
-                print(f"  ✓ {result.stdout.strip()}")
-            else:
-                print(f"  ✗ Error: {result.stderr.strip()}")
+
+            for script_path in script_paths:
+                print(f"\nSubmitting eval jobs from {script_path}...")
+                # IMPORTANT: `bsub` reads the job script from stdin.
+                # Using `['bsub', '<', ...]` does NOT perform shell redirection; it makes bsub
+                # wait for stdin and appears to "hang". Feed the file via stdin instead.
+                try:
+                    with script_path.open("rb") as f:
+                        result = subprocess.run(
+                            ["bsub"],
+                            stdin=f,
+                            capture_output=True,
+                            text=True,
+                        )
+                except OSError as e:
+                    print(f"  ✗ Error opening script: {e}")
+                    return 1
+                if result.returncode == 0:
+                    print(f"  ✓ {result.stdout.strip()}")
+                else:
+                    print(f"  ✗ Error: {result.stderr.strip()}")
         else:
             print("\nScript generated. Use 'make submit-eval' or add --submit to submit.")
     
