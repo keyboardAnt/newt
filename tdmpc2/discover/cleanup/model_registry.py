@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from ..wandb_connector import iter_model_collections
+from ..wandb_connector import iter_model_collections, DEFAULT_THREAD_WORKERS
 
 
 _STEP_TOKEN_RE = re.compile(r"^[0-9][0-9_]*$")
@@ -84,6 +86,12 @@ def plan_cleanup_latest_checkpoint_per_expert(
     by_collection: Dict[str, List[object]] = {}
     skipped = 0
 
+    # 1. Collect candidates
+    collections_to_fetch: List[Tuple[str, object]] = []
+
+    sys.stderr.write("Scanning collections...\n")
+    scan_start = time.time()
+
     for col in iter_model_collections(
         project_path,
         collection_name_regex=name_regex,
@@ -106,12 +114,32 @@ def plan_cleanup_latest_checkpoint_per_expert(
         if cur_step is None or parsed.step > cur_step:
             best[parsed.expert_key] = parsed.step
 
-        try:
-            versions = list(col.artifacts())
-        except Exception:
-            skipped += 1
-            continue
-        by_collection[collection_name] = versions
+        collections_to_fetch.append((collection_name, col))
+
+    sys.stderr.write(f"Found {len(collections_to_fetch)} matching collections in {time.time() - scan_start:.1f}s\n")
+
+    # 2. Parallel fetch
+    if collections_to_fetch:
+        sys.stderr.write(f"Fetching artifacts for {len(collections_to_fetch)} collections (parallel)...\n")
+        fetch_start = time.time()
+
+        def _fetch_versions(item):
+            c_name, c_obj = item
+            try:
+                return c_name, list(c_obj.artifacts())
+            except Exception:
+                return c_name, None
+
+        with ThreadPoolExecutor(max_workers=DEFAULT_THREAD_WORKERS) as executor:
+            results = executor.map(_fetch_versions, collections_to_fetch)
+
+            for c_name, versions in results:
+                if versions is None:
+                    skipped += 1
+                else:
+                    by_collection[c_name] = versions
+
+        sys.stderr.write(f"Fetched artifacts in {time.time() - fetch_start:.1f}s\n")
 
     keep: List[object] = []
     delete: List[object] = []
