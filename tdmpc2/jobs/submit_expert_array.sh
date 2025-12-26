@@ -15,7 +15,8 @@ mkdir -p logs/lsf
 echo "Submitting non-ManiSkill jobs 1-58 to long-gpu (48h walltime, exclusive GPU)..."
 bsub -J "newt-expert[1-58]" \
   -q long-gpu \
-  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB]" -W 48:00 -r \
+  # NOTE: LSF consumable resource `tmp` is in MB (see: `lsinfo -r`). 10240 MB ~= 10 GiB.
+  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB,tmp=10240]" -W 48:00 -r \
   -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
@@ -26,7 +27,7 @@ bsub -J "newt-expert[1-58]" \
 echo "Submitting non-ManiSkill jobs 106-225 to short-gpu (6h walltime, exclusive GPU)..."
 bsub -J "newt-expert[106-225]" \
   -q short-gpu \
-  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB]" -W 5:45 -r \
+  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB,tmp=10240]" -W 5:45 -r \
   -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \
@@ -38,7 +39,7 @@ bsub -J "newt-expert[106-225]" \
 echo "Submitting ManiSkill jobs 59-105 to long-gpu (48h walltime, exclusive GPU)..."
 bsub -J "newt-expert[59-105]" \
   -q long-gpu \
-  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB]" -W 48:00 -r \
+  -n 1 -gpu "num=1:mode=exclusive_process" -R "rusage[mem=32GB,tmp=10240]" -W 48:00 -r \
   -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-expert.%J.%I.log \
   -u "$USER" -N \

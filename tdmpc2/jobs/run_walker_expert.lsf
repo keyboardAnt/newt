@@ -3,7 +3,7 @@
 #BSUB -q "short-gpu long-gpu"        # Multi-queue: try short-gpu first (180 GPU limit)
 #BSUB -n 1                           # 1 CPU core (single LSF task on one host)
 #BSUB -gpu "num=1:mode=exclusive_process"  # 1 GPU (exclusive)
-#BSUB -R "rusage[mem=32GB]"          # 32 GB RAM total (mem is per task; here -n 1)
+#BSUB -R "rusage[mem=32GB,tmp=10240]" # tmp is MB; 10240 ~= 10 GiB
 #BSUB -W 5:45                        # walltime under 6h for short-gpu compatibility
 #BSUB -r                             # Requeue job on preemption (auto-resume will reload checkpoint)
 #BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-walker-expert.%J.out

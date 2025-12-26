@@ -5,7 +5,7 @@ End-to-end test for the heartbeat system on LSF cluster.
 This script acts as a "watcher" that validates the heartbeat contract from issue #5:
 - File appears within 60s at logs/<task>/<run_id>/heartbeat.json (or legacy logs/<run_id>/heartbeat.json)
 - Atomic writes (no partial JSON / decode errors)
-- Updates every ~30s
+- Updates at the configured heartbeat interval
 - progress.step is non-decreasing and increases during training
 - Required schema fields are present
 - Status becomes "stopping" on shutdown
@@ -49,8 +49,8 @@ def parse_timestamp(ts: str) -> datetime:
 
 # Contract thresholds from issue #5
 FILE_APPEAR_TIMEOUT = 60.0  # seconds
-HEARTBEAT_INTERVAL = 30.0  # expected interval
-CADENCE_MIN = 15.0  # allow some variance
+HEARTBEAT_INTERVAL = 5.0  # expected interval
+CADENCE_MIN = 2.0  # allow some variance
 CADENCE_MAX = 90.0  # allow scheduler delays
 POLL_INTERVAL = 0.5  # how often we check the file
 SHUTDOWN_TIMEOUT = 60.0  # time to wait for "stopping" status after training exits

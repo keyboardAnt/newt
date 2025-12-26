@@ -4,8 +4,11 @@ This module is the single source of truth for run liveness (heartbeat first,
 wandb fallback) and task-level progress aggregation aligned to tasks.json.
 
 Liveness precedence:
-    1. Heartbeat: run_dir/heartbeat.json exists and is fresh (age <= TTL)
-    2. Wandb fallback: status == 'running' and found_in in {'wandb', 'both'}
+    1. Heartbeat is authoritative if run_dir/heartbeat.json exists:
+       - alive if heartbeat is fresh (age <= TTL)
+       - otherwise not alive (no W&B fallback when heartbeat exists)
+    2. W&B fallback is only used when heartbeat.json does not exist:
+       - alive if status == 'running' and found_in in {'wandb', 'both'} (plus freshness)
 
 Usage:
     from discover.liveness import attach_liveness, build_task_progress
@@ -20,10 +23,9 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -34,16 +36,11 @@ if TYPE_CHECKING:
 
 # Default TTL for heartbeat liveness (seconds)
 # A heartbeat is considered "alive" if age <= TTL
-HEARTBEAT_TTL_S_DEFAULT = 120
+HEARTBEAT_TTL_S_DEFAULT = 30
 
 # Default TTL for considering a W&B run "alive" based on recent updates.
 # This prevents stale W&B "running" states from showing as active forever.
 WANDB_TTL_S_DEFAULT = 3600
-
-# If enabled, heartbeat liveness additionally requires that the LSF job is active
-# according to `bjobs`. This is useful when heartbeat files keep updating despite
-# LSF considering jobs EXIT/DONE (e.g., orphaned processes or scheduler mismatch).
-HEARTBEAT_REQUIRE_LSF_DEFAULT = False
 
 def get_heartbeat_ttl_s() -> int:
     """Get heartbeat TTL from env or default."""
@@ -55,14 +52,6 @@ def get_wandb_ttl_s() -> int:
     """Get W&B TTL from env or default."""
     env = os.environ.get("DISCOVER_WANDB_TTL_S")
     return int(env) if env else WANDB_TTL_S_DEFAULT
-
-
-def get_heartbeat_require_lsf() -> bool:
-    """Whether heartbeat liveness should be validated against LSF via `bjobs`."""
-    env = os.environ.get("DISCOVER_HEARTBEAT_REQUIRE_LSF", "")
-    if env == "":
-        return HEARTBEAT_REQUIRE_LSF_DEFAULT
-    return env.lower() in ("1", "true", "yes", "y", "on")
 
 
 # =============================================================================
@@ -113,39 +102,6 @@ def _read_heartbeat_json(run_dir) -> Optional[dict]:
         return None
 
 
-def _bjobs_job_is_active(job_id: str, *, timeout_s: float = 2.0) -> bool:
-    """Return True if `bjobs <job_id>` shows any active subjob (RUN/PEND/*SUSP).
-    
-    This is best-effort: on command failure we return True (don't hide potentially
-    running jobs just because bjobs is temporarily unavailable).
-    """
-    job_id = str(job_id).strip()
-    if not job_id:
-        return True
-    try:
-        proc = subprocess.run(
-            ["bjobs", job_id],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=timeout_s,
-        )
-    except Exception:
-        return True
-
-    out = (proc.stdout or "").strip().splitlines()
-    if len(out) <= 1:
-        # No rows (job not found / fully finished / command error); treat as not active.
-        return False
-
-    active_stats = {"RUN", "PEND", "SSUSP", "USUSP", "PSUSP"}
-    # Skip header, parse the STAT column (3rd whitespace-separated token).
-    for line in out[1:]:
-        parts = line.split()
-        if len(parts) >= 3 and parts[2] in active_stats:
-            return True
-    return False
 
 
 # =============================================================================
@@ -169,7 +125,7 @@ def attach_heartbeat(
     
     Args:
         df: DataFrame with 'run_dir' column (from discover_local_logs)
-        ttl_s: TTL threshold in seconds (default: DISCOVER_HEARTBEAT_TTL_S or 120)
+        ttl_s: TTL threshold in seconds (default: DISCOVER_HEARTBEAT_TTL_S or HEARTBEAT_TTL_S_DEFAULT)
         now: Current time for age calculation (default: datetime.now(timezone.utc))
     
     Returns:
@@ -185,6 +141,7 @@ def attach_heartbeat(
     if df.empty or 'run_dir' not in df.columns:
         # No run_dir column - return with empty heartbeat columns
         out = df.copy()
+        out['heartbeat_exists'] = False
         out['heartbeat_ts'] = pd.NaT
         out['heartbeat_age_s'] = float('nan')
         out['heartbeat_alive'] = False
@@ -194,9 +151,18 @@ def attach_heartbeat(
     
     def _extract_heartbeat(run_dir):
         """Extract heartbeat info for a single run."""
+        # Existence is based on file presence, even if JSON is unreadable.
+        heartbeat_exists = False
+        try:
+            if run_dir and not (isinstance(run_dir, float) and run_dir != run_dir):
+                heartbeat_exists = (Path(run_dir) / "heartbeat.json").is_file()
+        except Exception:
+            heartbeat_exists = False
+
         hb = _read_heartbeat_json(run_dir)
         if hb is None:
             return {
+                'heartbeat_exists': heartbeat_exists,
                 'heartbeat_ts': pd.NaT,
                 'heartbeat_age_s': float('nan'),
                 'heartbeat_alive': False,
@@ -209,6 +175,7 @@ def attach_heartbeat(
         ts_str = hb.get('timestamp')
         if not ts_str:
             return {
+                'heartbeat_exists': heartbeat_exists,
                 'heartbeat_ts': pd.NaT,
                 'heartbeat_age_s': float('nan'),
                 'heartbeat_alive': False,
@@ -230,6 +197,7 @@ def attach_heartbeat(
             alive = False
         
         return {
+            'heartbeat_exists': heartbeat_exists,
             'heartbeat_ts': ts,
             'heartbeat_age_s': age_s,
             'heartbeat_alive': alive,
@@ -247,26 +215,6 @@ def attach_heartbeat(
     for col in hb_df.columns:
         out[col] = hb_df[col]
 
-    # Optional: require the LSF job to be active for a heartbeat to count as alive.
-    # This validates "running" against scheduler truth.
-    if get_heartbeat_require_lsf() and 'heartbeat_alive' in out.columns and 'heartbeat_job_id' in out.columns:
-        cache: Dict[str, bool] = {}
-
-        def _job_active(job_id):
-            if job_id is None:
-                return True
-            jid = str(job_id).strip()
-            if not jid:
-                return True
-            if jid not in cache:
-                cache[jid] = _bjobs_job_is_active(jid)
-            return cache[jid]
-
-        alive_mask = out['heartbeat_alive'].fillna(False)
-        active_mask = out.loc[alive_mask, 'heartbeat_job_id'].apply(_job_active)
-        # Only keep alive heartbeats whose job is active.
-        out.loc[alive_mask, 'heartbeat_alive'] = active_mask.values
-    
     return out
 
 
@@ -280,14 +228,15 @@ def attach_liveness(
     
     This is the main entry point for liveness detection. It:
     1. Attaches heartbeat columns via attach_heartbeat()
-    2. Computes wandb_alive from status + found_in
-    3. Applies precedence: heartbeat first, then wandb fallback
+    2. Computes wandb_alive from status + found_in (only for runs without heartbeat.json)
+    3. Chooses liveness: heartbeat if heartbeat.json exists, else W&B
     
     Adds columns:
     - heartbeat_ts, heartbeat_age_s, heartbeat_alive, heartbeat_step, heartbeat_status
-    - wandb_alive: True if status == 'running' and found_in in {'wandb', 'both'}
-    - is_active: True if heartbeat_alive or wandb_alive
-    - active_source: 'heartbeat' | 'wandb' | 'none' (heartbeat wins)
+    - wandb_alive: True if status == 'running' and found_in in {'wandb', 'both'} (and fresh),
+      but only evaluated when heartbeat.json does not exist
+    - is_active: heartbeat_alive if heartbeat.json exists, else wandb_alive
+    - active_source: 'heartbeat' | 'wandb' | 'none'
     
     Args:
         df: DataFrame with run data (run_dir, status, found_in columns)
@@ -307,10 +256,22 @@ def attach_liveness(
     # First attach heartbeat columns
     out = attach_heartbeat(df, ttl_s=ttl_s, now=now)
     
-    # Compute wandb_alive (with freshness guard)
-    if 'found_in' in out.columns and 'status' in out.columns:
-        has_wandb = out['found_in'].isin(['wandb', 'both'])
-        is_running = out['status'] == 'running'
+    # Run liveness policy:
+    # - If heartbeat.json exists, rely ONLY on heartbeat liveness (even if stale).
+    # - Only if heartbeat.json does not exist, fall back to W&B liveness.
+    if 'heartbeat_exists' in out.columns:
+        hb_exists_mask = out['heartbeat_exists'].fillna(False).astype(bool)
+    else:
+        hb_exists_mask = pd.Series(False, index=out.index)
+
+    # Compute wandb_alive only for runs without a heartbeat file.
+    out['wandb_fresh'] = False
+    out['wandb_alive'] = False
+    if (~hb_exists_mask).any() and 'found_in' in out.columns and 'status' in out.columns:
+        needs_wandb = ~hb_exists_mask
+        has_wandb = out.loc[needs_wandb, 'found_in'].isin(['wandb', 'both'])
+        is_running = out.loc[needs_wandb, 'status'] == 'running'
+
         # Freshness: require updated_at within WANDB_TTL_S to count as alive.
         wandb_ttl_s = get_wandb_ttl_s()
         if 'updated_at' in out.columns:
@@ -324,28 +285,23 @@ def attach_liveness(
                 # don't treat it as "fresh".
                 age_s = (now - dt).total_seconds()
                 return (age_s >= 0) and (age_s <= wandb_ttl_s)
-            out['wandb_fresh'] = out['updated_at'].apply(_wandb_fresh)
-        else:
-            out['wandb_fresh'] = False
-        out['wandb_alive'] = has_wandb & is_running & out['wandb_fresh']
-    else:
-        out['wandb_fresh'] = False
-        out['wandb_alive'] = False
-    
-    # Apply precedence: heartbeat first, then wandb
+
+            out.loc[needs_wandb, 'wandb_fresh'] = out.loc[needs_wandb, 'updated_at'].apply(_wandb_fresh)
+
+        out.loc[needs_wandb, 'wandb_alive'] = has_wandb & is_running & out.loc[needs_wandb, 'wandb_fresh']
+
+    # Choose is_active based on presence of heartbeat.json
     hb_alive = out['heartbeat_alive'].fillna(False)
     wb_alive = out['wandb_alive'].fillna(False)
-    
-    out['is_active'] = hb_alive | wb_alive
-    
-    # Determine source (heartbeat wins)
+    out['is_active'] = hb_alive
+    out.loc[~hb_exists_mask, 'is_active'] = wb_alive.loc[~hb_exists_mask].values
+
+    # Determine active source (only for active runs; heartbeat is authoritative if it exists).
     def _get_source(row):
-        if row.get('heartbeat_alive', False):
-            return 'heartbeat'
-        elif row.get('wandb_alive', False):
-            return 'wandb'
-        return 'none'
-    
+        if row.get('heartbeat_exists', False):
+            return 'heartbeat' if row.get('heartbeat_alive', False) else 'none'
+        return 'wandb' if row.get('wandb_alive', False) else 'none'
+
     out['active_source'] = out.apply(_get_source, axis=1)
     
     return out

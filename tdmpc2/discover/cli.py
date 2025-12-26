@@ -358,7 +358,7 @@ def cmd_restart(args) -> int:
         
         return f'''bsub -J "newt-expert[{idx_str}]" \\
   -q {queue} \\
-  -n 1 -gpu {gpu_spec} -R "rusage[mem=32GB]" -W {walltime} -r \\
+  -n 1 -gpu {gpu_spec} -R "rusage[mem=32GB,tmp=10240]" -W {walltime} -r \\
   -o {tdmpc2_dir}/logs/lsf/newt-expert.%J.%I.log \\
   -e {tdmpc2_dir}/logs/lsf/newt-expert.%J.%I.log \\
   -u "$USER" -N \\

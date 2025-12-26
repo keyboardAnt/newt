@@ -244,6 +244,74 @@ def discover_wandb_runs(project_path: str, limit: Optional[int]) -> "pd.DataFram
     return df
 
 
+def discover_wandb_runs_by_id(project_path: str, run_ids: Iterable[str]) -> "pd.DataFrame":
+    """Fetch a specific set of W&B runs by id (avoids full project scan).
+
+    Args:
+        project_path: W&B project path, e.g. "entity/project"
+        run_ids: Iterable of W&B run ids
+    """
+    pd = require_pandas()
+    import time
+
+    try:
+        import wandb  # type: ignore
+    except ImportError as exc:
+        sys.stderr.write("wandb is required. Install with `pip install wandb`.\n")
+        raise SystemExit(1) from exc
+
+    # Normalize/unique while preserving order.
+    seen = set()
+    ids: List[str] = []
+    for rid in run_ids:
+        if rid is None:
+            continue
+        s = str(rid).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        ids.append(s)
+
+    if not ids:
+        return pd.DataFrame()
+
+    sys.stderr.write(f"Fetching {len(ids)} runs from wandb by id ({project_path})...\n")
+    api = wandb.Api()
+
+    # Fetch run objects (one call per id). Keep this simple/serial for robustness.
+    start_time = time.time()
+    run_objects = []
+    missing = 0
+    for rid in ids:
+        try:
+            run_objects.append(api.run(f"{project_path}/{rid}"))
+        except Exception:
+            missing += 1
+            continue
+    fetch_time = time.time() - start_time
+    sys.stderr.write(f"  Resolved {len(run_objects)} runs ({missing} missing) in {fetch_time:.1f}s\n")
+
+    if not run_objects:
+        return pd.DataFrame()
+
+    # Process run details (may trigger additional API calls for config/summary).
+    from concurrent.futures import ThreadPoolExecutor
+
+    sys.stderr.write("  Fetching run details (parallel)...\n")
+    sys.stderr.flush()
+    start_time = time.time()
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        rows = list(executor.map(_process_wandb_run, run_objects))
+    elapsed = time.time() - start_time
+    rate = len(rows) / elapsed if elapsed > 0 else 0
+    sys.stderr.write(f"  Fetched {len(rows)} run details in {elapsed:.1f}s ({rate:.0f}/s)\n")
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["found_in"] = "wandb"
+    return df
+
+
 def discover(logs_dir: Optional[Path], wandb_project: Optional[str], limit: Optional[int]) -> "pd.DataFrame":
     """Discover runs, joining local and wandb if both provided."""
     pd = require_pandas()

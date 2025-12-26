@@ -98,13 +98,13 @@ class HeartbeatWriter:
         - host.hostname: Machine hostname
         - host.pid: Process ID
     
-    TTL semantics:
-        - alive: age <= 120s
-        - maybe-stale: 120s < age <= 600s
+    TTL semantics (consumer-side):
+        The heartbeat file itself does not enforce TTL; consumers decide what "alive" means.
+        See `tdmpc2/discover/liveness.py` for the heartbeat TTL policy and its environment override.
     """
     
     SCHEMA_VERSION = 1
-    DEFAULT_INTERVAL = 30.0  # seconds
+    DEFAULT_INTERVAL = 5.0  # seconds
     
     def __init__(
         self,
@@ -124,7 +124,7 @@ class HeartbeatWriter:
             kind: Job type ('train' or 'eval')
             task: Task name
             seed: Optional seed value
-            interval: Update interval in seconds (default: 30)
+            interval: Update interval in seconds (default: HeartbeatWriter.DEFAULT_INTERVAL)
             enabled: Whether heartbeat is enabled (disabled for rank > 0)
         """
         self.work_dir = Path(work_dir)

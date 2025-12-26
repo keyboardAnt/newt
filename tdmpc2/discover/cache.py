@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from .runs import discover_local_logs, discover_wandb_runs
+from .runs import discover_wandb_runs_by_id
 
 
 def require_pandas():
@@ -185,10 +186,76 @@ def load_all_runs(
     
     Pass an empty string for `wandb_project` to disable W&B fetching (local-only).
     """
+    pd = require_pandas()
+
     local_df = discover_local_logs(logs_dir, limit=None)
-    wandb_df = discover_wandb_runs(wandb_project, limit=wandb_limit) if wandb_project else require_pandas().DataFrame()
-    df_all = combine_runs(local_df, wandb_df)
-    return df_all, latest_timestamp(df_all)
+    if not wandb_project:
+        return local_df, latest_timestamp(local_df)
+
+    # If we have local logs, avoid a full W&B project scan:
+    # only fetch W&B runs for local runs that *do not* have a heartbeat file.
+    # This aligns with discover.liveness policy: heartbeat presence is authoritative.
+    wandb_df = pd.DataFrame()
+    if not local_df.empty and "wandb_run_id" in local_df.columns:
+        def _hb_exists(run_dir) -> bool:
+            try:
+                if run_dir is None or (isinstance(run_dir, float) and pd.isna(run_dir)):
+                    return False
+                p = Path(str(run_dir))
+                return (p / "heartbeat.json").is_file()
+            except Exception:
+                return False
+
+        if "run_dir" in local_df.columns:
+            hb_exists = local_df["run_dir"].apply(_hb_exists)
+        else:
+            hb_exists = pd.Series(False, index=local_df.index)
+
+        ids_to_fetch = local_df.loc[~hb_exists, "wandb_run_id"].dropna().astype(str).unique().tolist()
+        if ids_to_fetch:
+            wandb_df = discover_wandb_runs_by_id(wandb_project, ids_to_fetch)
+    else:
+        # No local logs: fall back to full project discovery (keeps wandb-only mode working).
+        wandb_df = discover_wandb_runs(wandb_project, limit=wandb_limit)
+
+    if local_df.empty:
+        return wandb_df, latest_timestamp(wandb_df)
+    if wandb_df.empty:
+        return local_df, latest_timestamp(local_df)
+
+    # Merge local and wandb on wandb_run_id (single-row-per-run view).
+    merged = pd.merge(
+        local_df,
+        wandb_df,
+        on="wandb_run_id",
+        how="outer",
+        suffixes=("_local", "_wandb"),
+        indicator=True,
+    )
+    merged["found_in"] = merged["_merge"].map(
+        {"both": "both", "left_only": "local", "right_only": "wandb"}
+    )
+    merged = merged.drop(columns=["_merge"])
+
+    # Consolidate duplicated columns (prefer local for identifiers, prefer wandb for URL/summary).
+    for col in ["task", "exp_name", "updated_at", "run_dir", "ckpt_path", "ckpt_step", "steps"]:
+        local_col, wandb_col = f"{col}_local", f"{col}_wandb"
+        if local_col in merged.columns and wandb_col in merged.columns:
+            merged[col] = merged[local_col].combine_first(merged[wandb_col])
+            merged = merged.drop(columns=[local_col, wandb_col])
+
+    for col in ["url", "summary"]:
+        local_col, wandb_col = f"{col}_local", f"{col}_wandb"
+        if local_col in merged.columns and wandb_col in merged.columns:
+            merged[col] = merged[wandb_col].combine_first(merged[local_col])
+            merged = merged.drop(columns=[local_col, wandb_col])
+
+    # For status, prefer wandb (more accurate real-time state) over local.
+    if "status_local" in merged.columns and "status_wandb" in merged.columns:
+        merged["status"] = merged["status_wandb"].combine_first(merged["status_local"])
+        merged = merged.drop(columns=["status_local", "status_wandb"])
+
+    return merged, latest_timestamp(merged)
 
 
 class RunsCache:
