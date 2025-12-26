@@ -35,10 +35,13 @@ def load_df(
     Returns:
         DataFrame with all runs (local + wandb merged)
     """
+    # Important: allow callers to *explicitly disable* wandb by passing an empty string.
+    # (Using `wandb_project or get_wandb_project()` would incorrectly re-enable it.)
+    effective_wandb_project = get_wandb_project() if wandb_project is None else wandb_project
     cache = RunsCache(
         logs_dir=logs_dir or get_logs_dir(),
         cache_path=cache_path or get_cache_path(),
-        wandb_project=wandb_project or get_wandb_project(),
+        wandb_project=effective_wandb_project,
         wandb_limit=wandb_limit,
     )
     df, _timestamp, _used_cache = cache.load(refresh=refresh)
@@ -57,10 +60,11 @@ def load_df_with_meta(
     Returns:
         Tuple of (DataFrame, timestamp, used_cache)
     """
+    effective_wandb_project = get_wandb_project() if wandb_project is None else wandb_project
     cache = RunsCache(
         logs_dir=logs_dir or get_logs_dir(),
         cache_path=cache_path or get_cache_path(),
-        wandb_project=wandb_project or get_wandb_project(),
+        wandb_project=effective_wandb_project,
         wandb_limit=wandb_limit,
     )
     return cache.load(refresh=refresh)

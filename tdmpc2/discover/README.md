@@ -65,6 +65,7 @@ python -m discover tasks --format json      # Output as JSON (also: csv, table)
 python -m discover tasks --not-started      # Filter to not-started tasks
 python -m discover tasks --stalled          # Filter to stalled tasks
 python -m discover tasks --all              # Include non-official tasks (e.g., smoke-test)
+python -m discover status --no-wandb        # Local-only (disable W&B)
 python -m discover --help                   # Show all options
 ```
 
@@ -123,6 +124,20 @@ discover/
 - **LSF RUN**: Jobs actually using CPU right now.
 - **LSF SSUSP**: Jobs suspended by cluster (process paused, wandb still says "running").
 - **Local-only "running"**: Unreliable - likely crashed runs with stale `run_info.yaml`.
+
+### Local-only mode (no W&B)
+
+You can run `discover` without any W&B dependency:
+
+- **CLI**: `python -m discover --no-wandb <command>`
+- **Env**: set `DISCOVER_WANDB_PROJECT` to an empty string (`DISCOVER_WANDB_PROJECT=""`)
+
+Tradeoffs:
+- **Running detection**: becomes **heartbeat-only** (requires `run_dir/heartbeat.json` to be written).
+- **Progress**: derived from local checkpoints (`checkpoints/*.pt`). If you rely on W&B summary `_step`
+  being ahead of the last checkpoint, local-only progress may lag.
+- **Downloading videos from W&B**: not available (but collecting already-synced videos under `logs/**/wandb/...`
+  still works).
 
 ## Restart Workflow
 

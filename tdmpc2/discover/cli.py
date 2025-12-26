@@ -48,7 +48,7 @@ def cmd_refresh(args) -> int:
     
     print(f"Refreshing cache...")
     print(f"  Logs dir:      {args.logs_dir}")
-    print(f"  Wandb project: {args.wandb_project}")
+    print(f"  Wandb project: {args.wandb_project or '(disabled)'}")
     print(f"  Cache path:    {args.cache_path}")
     print()
     
@@ -557,10 +557,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help='Override cache file path')
     parser.add_argument('--wandb-project', type=str, default=None,
                         help='Override wandb project')
+    parser.add_argument('--no-wandb', action='store_true',
+                        help='Disable W&B entirely (local-only discovery)')
     parser.add_argument('--target-step', type=int, default=None,
                         help='Override target step')
     parser.add_argument('--refresh', action='store_true',
-                        help='Force refresh from local logs and wandb')
+                        help='Force refresh from sources (local logs + optional wandb)')
     
     subparsers = parser.add_subparsers(dest='command', required=True)
     
@@ -630,7 +632,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.logs_dir = get_logs_dir()
     if args.cache_path is None:
         args.cache_path = get_cache_path()
-    if args.wandb_project is None:
+    if args.no_wandb:
+        # Explicit local-only mode: keep as empty string so downstream knows to skip W&B.
+        args.wandb_project = ""
+    elif args.wandb_project is None:
         args.wandb_project = get_wandb_project()
     if args.target_step is None:
         args.target_step = get_target_step()

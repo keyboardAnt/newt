@@ -181,9 +181,12 @@ def load_all_runs(
     wandb_project: str,
     wandb_limit: Optional[int] = None,
 ) -> Tuple["pd.DataFrame", datetime]:
-    """Load runs from both local logs and W&B."""
+    """Load runs from local logs and (optionally) W&B.
+    
+    Pass an empty string for `wandb_project` to disable W&B fetching (local-only).
+    """
     local_df = discover_local_logs(logs_dir, limit=None)
-    wandb_df = discover_wandb_runs(wandb_project, limit=wandb_limit)
+    wandb_df = discover_wandb_runs(wandb_project, limit=wandb_limit) if wandb_project else require_pandas().DataFrame()
     df_all = combine_runs(local_df, wandb_df)
     return df_all, latest_timestamp(df_all)
 

@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -39,6 +40,11 @@ HEARTBEAT_TTL_S_DEFAULT = 120
 # This prevents stale W&B "running" states from showing as active forever.
 WANDB_TTL_S_DEFAULT = 3600
 
+# If enabled, heartbeat liveness additionally requires that the LSF job is active
+# according to `bjobs`. This is useful when heartbeat files keep updating despite
+# LSF considering jobs EXIT/DONE (e.g., orphaned processes or scheduler mismatch).
+HEARTBEAT_REQUIRE_LSF_DEFAULT = False
+
 def get_heartbeat_ttl_s() -> int:
     """Get heartbeat TTL from env or default."""
     env = os.environ.get("DISCOVER_HEARTBEAT_TTL_S")
@@ -49,6 +55,14 @@ def get_wandb_ttl_s() -> int:
     """Get W&B TTL from env or default."""
     env = os.environ.get("DISCOVER_WANDB_TTL_S")
     return int(env) if env else WANDB_TTL_S_DEFAULT
+
+
+def get_heartbeat_require_lsf() -> bool:
+    """Whether heartbeat liveness should be validated against LSF via `bjobs`."""
+    env = os.environ.get("DISCOVER_HEARTBEAT_REQUIRE_LSF", "")
+    if env == "":
+        return HEARTBEAT_REQUIRE_LSF_DEFAULT
+    return env.lower() in ("1", "true", "yes", "y", "on")
 
 
 # =============================================================================
@@ -97,6 +111,41 @@ def _read_heartbeat_json(run_dir) -> Optional[dict]:
             return json.load(f)
     except (json.JSONDecodeError, OSError, IOError):
         return None
+
+
+def _bjobs_job_is_active(job_id: str, *, timeout_s: float = 2.0) -> bool:
+    """Return True if `bjobs <job_id>` shows any active subjob (RUN/PEND/*SUSP).
+    
+    This is best-effort: on command failure we return True (don't hide potentially
+    running jobs just because bjobs is temporarily unavailable).
+    """
+    job_id = str(job_id).strip()
+    if not job_id:
+        return True
+    try:
+        proc = subprocess.run(
+            ["bjobs", job_id],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout_s,
+        )
+    except Exception:
+        return True
+
+    out = (proc.stdout or "").strip().splitlines()
+    if len(out) <= 1:
+        # No rows (job not found / fully finished / command error); treat as not active.
+        return False
+
+    active_stats = {"RUN", "PEND", "SSUSP", "USUSP", "PSUSP"}
+    # Skip header, parse the STAT column (3rd whitespace-separated token).
+    for line in out[1:]:
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] in active_stats:
+            return True
+    return False
 
 
 # =============================================================================
@@ -153,6 +202,8 @@ def attach_heartbeat(
                 'heartbeat_alive': False,
                 'heartbeat_step': pd.NA,
                 'heartbeat_status': None,
+                'heartbeat_job_id': None,
+                'heartbeat_host': None,
             }
         
         ts_str = hb.get('timestamp')
@@ -163,12 +214,16 @@ def attach_heartbeat(
                 'heartbeat_alive': False,
                 'heartbeat_step': hb.get('progress', {}).get('step'),
                 'heartbeat_status': hb.get('status'),
+                'heartbeat_job_id': (hb.get('job') or {}).get('job_id'),
+                'heartbeat_host': (hb.get('host') or {}).get('hostname'),
             }
         
         try:
             ts = _parse_heartbeat_timestamp(ts_str)
             age_s = (now - ts).total_seconds()
-            alive = age_s <= ttl_s
+            # Guard against clock/timezone skew: a heartbeat timestamp in the future
+            # should not mark a run as alive.
+            alive = (age_s >= 0) and (age_s <= ttl_s)
         except (ValueError, TypeError):
             ts = pd.NaT
             age_s = float('nan')
@@ -180,6 +235,8 @@ def attach_heartbeat(
             'heartbeat_alive': alive,
             'heartbeat_step': hb.get('progress', {}).get('step'),
             'heartbeat_status': hb.get('status'),
+            'heartbeat_job_id': (hb.get('job') or {}).get('job_id'),
+            'heartbeat_host': (hb.get('host') or {}).get('hostname'),
         }
     
     # Apply to each row
@@ -189,6 +246,26 @@ def attach_heartbeat(
     out = df.copy()
     for col in hb_df.columns:
         out[col] = hb_df[col]
+
+    # Optional: require the LSF job to be active for a heartbeat to count as alive.
+    # This validates "running" against scheduler truth.
+    if get_heartbeat_require_lsf() and 'heartbeat_alive' in out.columns and 'heartbeat_job_id' in out.columns:
+        cache: Dict[str, bool] = {}
+
+        def _job_active(job_id):
+            if job_id is None:
+                return True
+            jid = str(job_id).strip()
+            if not jid:
+                return True
+            if jid not in cache:
+                cache[jid] = _bjobs_job_is_active(jid)
+            return cache[jid]
+
+        alive_mask = out['heartbeat_alive'].fillna(False)
+        active_mask = out.loc[alive_mask, 'heartbeat_job_id'].apply(_job_active)
+        # Only keep alive heartbeats whose job is active.
+        out.loc[alive_mask, 'heartbeat_alive'] = active_mask.values
     
     return out
 
@@ -221,6 +298,11 @@ def attach_liveness(
         DataFrame with all liveness columns added.
     """
     pd = _require_pandas()
+
+    # `now` is used both by attach_heartbeat() and by wandb freshness checks below.
+    # attach_heartbeat() will default internally, but we also need a concrete value here.
+    if now is None:
+        now = datetime.now(timezone.utc)
     
     # First attach heartbeat columns
     out = attach_heartbeat(df, ttl_s=ttl_s, now=now)
@@ -238,7 +320,10 @@ def attach_liveness(
                 dt = _parse_updated_at(updated_at)
                 if dt is None:
                     return False
-                return (now - dt).total_seconds() <= wandb_ttl_s
+                # Guard against clock/timezone skew: if updated_at is in the future,
+                # don't treat it as "fresh".
+                age_s = (now - dt).total_seconds()
+                return (age_s >= 0) and (age_s <= wandb_ttl_s)
             out['wandb_fresh'] = out['updated_at'].apply(_wandb_fresh)
         else:
             out['wandb_fresh'] = False
