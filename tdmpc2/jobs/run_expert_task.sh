@@ -16,6 +16,33 @@ RUN_ID="${RUN_TS}_${EXP_NAME}"
 WORK_DIR="/home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/${TASK}/${RUN_ID}"
 mkdir -p "${WORK_DIR}"
 
+# =============================================================================
+# LSF LOG BROWSING UX:
+# - Keep the canonical run layout: logs/<task>/<run_id>/...
+# - Also create a run-centric directory under logs/lsf/<run_id>/ that can be used
+#   to browse LSF-related artifacts across tasks.
+# - Symlink logs/<task>/<run_id>/lsf_logs -> logs/lsf/<run_id>
+#
+# Note: the raw LSF stdout/stderr file is configured at submission time as:
+#   logs/lsf/newt-expert.%J.%I.log
+# We can't redirect that to <run_id> because <run_id> is computed here, but we can
+# create a convenient symlink from logs/lsf/<run_id>/ to that raw file.
+# =============================================================================
+LSF_ROOT="/home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf"
+LSF_RUN_DIR="${LSF_ROOT}/${RUN_ID}"
+mkdir -p "${LSF_RUN_DIR}" || true
+
+# Link the canonical run dir to the LSF view (best effort; never fail the job on this).
+ln -sfn "${LSF_RUN_DIR}" "${WORK_DIR}/lsf_logs" 2>/dev/null || true
+
+# Best-effort: link the raw LSF combined stdout/stderr file (if it exists) into the run LSF dir.
+# This file is typically written even for very early failures (e.g., container startup errors),
+# as long as the parent directory exists at submission time.
+RAW_LSF_FILE="${LSF_ROOT}/newt-expert.${LSB_JOBID}.${LSB_JOBINDEX}.log"
+if [[ -n "${LSB_JOBID:-}" && -n "${LSB_JOBINDEX:-}" ]]; then
+  ln -sfn "${RAW_LSF_FILE}" "${LSF_RUN_DIR}/newt-expert.log" 2>/dev/null || true
+fi
+
 # Capture everything from this point onward into the run directory as well.
 # (LSF will still write its own -o/-e file; this makes per-run debugging much easier.)
 exec > >(tee -a "${WORK_DIR}/lsf.log") 2>&1

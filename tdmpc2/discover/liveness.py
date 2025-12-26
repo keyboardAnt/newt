@@ -35,10 +35,20 @@ if TYPE_CHECKING:
 # A heartbeat is considered "alive" if age <= TTL
 HEARTBEAT_TTL_S_DEFAULT = 120
 
+# Default TTL for considering a W&B run "alive" based on recent updates.
+# This prevents stale W&B "running" states from showing as active forever.
+WANDB_TTL_S_DEFAULT = 3600
+
 def get_heartbeat_ttl_s() -> int:
     """Get heartbeat TTL from env or default."""
     env = os.environ.get("DISCOVER_HEARTBEAT_TTL_S")
     return int(env) if env else HEARTBEAT_TTL_S_DEFAULT
+
+
+def get_wandb_ttl_s() -> int:
+    """Get W&B TTL from env or default."""
+    env = os.environ.get("DISCOVER_WANDB_TTL_S")
+    return int(env) if env else WANDB_TTL_S_DEFAULT
 
 
 # =============================================================================
@@ -58,6 +68,20 @@ def _parse_heartbeat_timestamp(ts: str) -> datetime:
     if ts.endswith("Z"):
         ts = ts[:-1] + "+00:00"
     return datetime.fromisoformat(ts)
+
+
+def _parse_updated_at(ts: str) -> Optional[datetime]:
+    """Parse ISO-8601 timestamp from W&B updated_at (may be naive or tz-aware)."""
+    try:
+        # Handle Z suffix
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
 
 
 def _read_heartbeat_json(run_dir) -> Optional[dict]:
@@ -201,12 +225,26 @@ def attach_liveness(
     # First attach heartbeat columns
     out = attach_heartbeat(df, ttl_s=ttl_s, now=now)
     
-    # Compute wandb_alive
+    # Compute wandb_alive (with freshness guard)
     if 'found_in' in out.columns and 'status' in out.columns:
         has_wandb = out['found_in'].isin(['wandb', 'both'])
         is_running = out['status'] == 'running'
-        out['wandb_alive'] = has_wandb & is_running
+        # Freshness: require updated_at within WANDB_TTL_S to count as alive.
+        wandb_ttl_s = get_wandb_ttl_s()
+        if 'updated_at' in out.columns:
+            def _wandb_fresh(updated_at):
+                if not isinstance(updated_at, str) or not updated_at:
+                    return False
+                dt = _parse_updated_at(updated_at)
+                if dt is None:
+                    return False
+                return (now - dt).total_seconds() <= wandb_ttl_s
+            out['wandb_fresh'] = out['updated_at'].apply(_wandb_fresh)
+        else:
+            out['wandb_fresh'] = False
+        out['wandb_alive'] = has_wandb & is_running & out['wandb_fresh']
     else:
+        out['wandb_fresh'] = False
         out['wandb_alive'] = False
     
     # Apply precedence: heartbeat first, then wandb

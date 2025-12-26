@@ -339,6 +339,7 @@ def cmd_restart(args) -> int:
     
     # Generate bsub commands
     tdmpc2_dir = get_logs_dir().parent  # tdmpc2/
+    lsf_logs_dir = tdmpc2_dir / "logs" / "lsf"
     
     def format_bsub_cmd(indices: List[int], queue: str, gpu_mode: str, walltime: str) -> str:
         """Format a bsub command for a group of indices."""
@@ -399,6 +400,14 @@ def cmd_restart(args) -> int:
     print("\n" + "=" * 80)
     
     if args.submit:
+        # Ensure the LSF stdout/stderr directory exists before submitting.
+        # Without this, jobs may run without any accessible output files, making
+        # fast failures (e.g., container startup issues) very hard to debug.
+        lsf_logs_dir.mkdir(parents=True, exist_ok=True)
+        if not lsf_logs_dir.is_dir():
+            print(f"\nError: failed to create LSF log directory: {lsf_logs_dir}")
+            return 1
+
         print("\nSubmitting jobs...")
         for desc, cmd, tasks_in_group in commands:
             print(f"\n  Submitting {len(tasks_in_group)} tasks to {desc.split()[0]}...")
