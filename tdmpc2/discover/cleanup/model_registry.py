@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+from ..wandb_connector import iter_model_collections
 
 
 _STEP_TOKEN_RE = re.compile(r"^[0-9][0-9_]*$")
@@ -51,77 +53,6 @@ def _parse_version_int(version: str) -> Optional[int]:
     if not tail.isdigit():
         return None
     return int(tail)
-
-
-def iter_model_collections(
-    project_path: str,
-    *,
-    collection_name_regex: Optional[str] = None,
-    exact_collections: Optional[Iterable[str]] = None,
-    max_collections: Optional[int] = None,
-    progress_every: int = 200,
-) -> Iterator[object]:
-    """Yield W&B ArtifactCollection objects of type 'model' for a given entity/project.
-
-    Notes:
-    - `Api.artifact_type(...).collections()` is the most reliable W&B API surface in wandb==0.22.x.
-    - If `exact_collections` is provided, we avoid scanning the whole project by fetching each
-      collection directly (fast-path).
-    """
-    try:
-        import wandb  # type: ignore
-    except ImportError as exc:
-        sys.stderr.write("wandb is required. Install with `pip install wandb`.\n")
-        raise SystemExit(1) from exc
-
-    name_re = re.compile(collection_name_regex) if collection_name_regex else None
-
-    api = wandb.Api(timeout=60)
-    at = api.artifact_type("model", project_path)
-
-    if exact_collections:
-        yielded = 0
-        for col_name in exact_collections:
-            col_name = str(col_name).strip()
-            if not col_name:
-                continue
-            if name_re and not name_re.search(col_name):
-                continue
-            try:
-                # Full path: "entity/project/collection"
-                yield api.artifact_collection("model", f"{project_path}/{col_name}")
-                yielded += 1
-            except Exception as e:
-                sys.stderr.write(f"[cleanup-models] Failed to fetch collection {col_name!r}: {e}\n")
-                continue
-            if max_collections is not None and yielded >= max_collections:
-                break
-        return
-
-    scanned = 0
-    yielded = 0
-    for col in at.collections():
-        scanned += 1
-        if progress_every and scanned % int(progress_every) == 0:
-            sys.stderr.write(f"\rScanning model artifact collections... {scanned}")
-            sys.stderr.flush()
-
-        try:
-            col_name = str(getattr(col, "name", "") or "")
-        except Exception:
-            continue
-
-        if name_re and not name_re.search(col_name):
-            continue
-
-        yield col
-        yielded += 1
-        if max_collections is not None and yielded >= max_collections:
-            break
-
-    if scanned:
-        sys.stderr.write(f"\rScanning model artifact collections... {scanned} ✓\n")
-        sys.stderr.flush()
 
 
 @dataclass

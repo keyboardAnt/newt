@@ -568,7 +568,7 @@ def cmd_cleanup_models(args) -> int:
         print("❌ W&B disabled (no --wandb-project). Nothing to clean.")
         return 1
 
-    from .cleanup.wandb_models import (
+    from .cleanup.model_registry import (
         apply_cleanup_plan,
         plan_cleanup_latest_checkpoint_per_expert,
         print_cleanup_plan,

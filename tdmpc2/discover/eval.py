@@ -543,11 +543,7 @@ def download_wandb_videos(
     """
     pd = require_pandas()
     
-    try:
-        import wandb
-    except ImportError:
-        print("❌ wandb is required. Install with: pip install wandb")
-        return None
+    from .wandb_connector import fetch_run
     
     min_step = int(target_step * min_progress)
     best = best_step_by_task(df)
@@ -565,7 +561,6 @@ def download_wandb_videos(
     
     print(f"🔍 Checking {len(wandb_ready)} tasks for videos on Wandb...")
     
-    api = wandb.Api(timeout=60)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -577,7 +572,7 @@ def download_wandb_videos(
         max_step = row['max_step']
         
         try:
-            run = api.run(f"{wandb_project}/{run_id}")
+            run = fetch_run(wandb_project, run_id)
             
             # Find video files in the run
             files = run.files()
