@@ -8,6 +8,19 @@ cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 # Get task name from tasks.py (ensures consistent filtering of variant tasks)
 TASK=$(python -c "from tasks import index_to_task; print(index_to_task(${LSB_JOBINDEX}))")
 
+# =============================================================================
+# RETRY POLICY
+# =============================================================================
+# Note: `bsub -r` does NOT reliably retry application-level crashes on many LSF setups
+# (it is typically for rerunning after certain system failures / requeues).
+# We therefore implement a simple in-job retry loop for transient failures.
+#
+# Controls:
+# - NEWT_TRAIN_RETRIES: number of retries after the first attempt (default: 1)
+# - NEWT_TRAIN_RETRY_SLEEP_S: sleep between retries in seconds (default: 60)
+NEWT_TRAIN_RETRIES="${NEWT_TRAIN_RETRIES:-1}"
+NEWT_TRAIN_RETRY_SLEEP_S="${NEWT_TRAIN_RETRY_SLEEP_S:-60}"
+
 # Create a deterministic work_dir for this run up-front so we can capture LSF stdout/stderr there.
 # We pass run_id/work_dir into Hydra so train.py uses exactly this directory.
 RUN_TS="$(date +%Y%m%d_%H%M%S)"
@@ -107,9 +120,10 @@ fi
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 echo "Work dir: ${WORK_DIR}"
 
-# Auto-resume from the latest available checkpoint for this task (if any).
-# This makes restarts robust even if the submit script doesn't explicitly pass checkpoint=...
-CKPT=$(TASK="${TASK}" python - <<'PY'
+find_latest_ckpt() {
+  # Auto-resume from the latest available checkpoint for this task (if any).
+  # This makes restarts robust even if the submit script doesn't explicitly pass checkpoint=...
+  TASK="${TASK}" python - <<'PY'
 import os
 from pathlib import Path
 
@@ -162,13 +176,7 @@ if candidates:
     _step, path = max(candidates, key=lambda x: x[0])
     print(str(path))
 PY
-)
-
-if [[ -n "${CKPT}" ]]; then
-  echo "Auto-resume: found checkpoint for ${TASK}: ${CKPT}"
-else
-  echo "Auto-resume: no checkpoint found for ${TASK} (starting from scratch)"
-fi
+}
 
 ARGS=(
   task="${TASK}"
@@ -185,8 +193,38 @@ ARGS=(
   compile=False
 )
 
-if [[ -n "${CKPT}" ]]; then
-  ARGS+=(checkpoint="${CKPT}")
-fi
+MAX_ATTEMPTS=$((NEWT_TRAIN_RETRIES + 1))
+ATTEMPT=1
+while (( ATTEMPT <= MAX_ATTEMPTS )); do
+  echo "=== train.py attempt ${ATTEMPT}/${MAX_ATTEMPTS} (task=${TASK}, run_id=${RUN_ID}) ==="
 
-python train.py "${ARGS[@]}"
+  CKPT="$(find_latest_ckpt || true)"
+  if [[ -n "${CKPT}" ]]; then
+    echo "Auto-resume: found checkpoint for ${TASK}: ${CKPT}"
+  else
+    echo "Auto-resume: no checkpoint found for ${TASK} (starting from scratch)"
+  fi
+
+  # Build per-attempt args (avoid accidentally accumulating checkpoint= across retries).
+  ARGS_ATTEMPT=("${ARGS[@]}")
+  if [[ -n "${CKPT}" ]]; then
+    ARGS_ATTEMPT+=(checkpoint="${CKPT}")
+  fi
+
+  if python train.py "${ARGS_ATTEMPT[@]}"; then
+    echo "train.py completed successfully."
+    break
+  fi
+
+  EXIT_CODE=$?
+  echo "train.py crashed/failed with exit code ${EXIT_CODE}."
+
+  if (( ATTEMPT >= MAX_ATTEMPTS )); then
+    echo "No retries left (NEWT_TRAIN_RETRIES=${NEWT_TRAIN_RETRIES}). Exiting."
+    exit "${EXIT_CODE}"
+  fi
+
+  echo "Retrying after ${NEWT_TRAIN_RETRY_SLEEP_S}s... (set NEWT_TRAIN_RETRIES/NEWT_TRAIN_RETRY_SLEEP_S to control)"
+  sleep "${NEWT_TRAIN_RETRY_SLEEP_S}"
+  ATTEMPT=$((ATTEMPT + 1))
+done

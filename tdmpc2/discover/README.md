@@ -157,6 +157,12 @@ make restart-submit
 bjobs -J 'newt-expert*'
 ```
 
+Notes:
+- `python -m discover restart --submit` is **not a daemon**: it submits jobs based on the current snapshot, and then exits.
+  If you want continuous “auto-restart”, run it periodically (e.g., cron) or keep it running in a loop.
+- Job-level retries on transient crashes are handled in `jobs/run_expert_task.sh` via `NEWT_TRAIN_RETRIES`
+  (default: 1) and `NEWT_TRAIN_RETRY_SLEEP_S` (default: 60).
+
 The restart command:
 - Maps task names to indices via `tdmpc2/tasks.py` (loaded from `tasks.json`)
 - Groups by queue/GPU-mode (matching `jobs/submit_expert_array.sh`)

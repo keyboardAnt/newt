@@ -118,14 +118,28 @@ def training_overview(df: "pd.DataFrame", target_step: int = 5_000_000) -> None:
     # Cumulative progress
     ax2 = axes[1]
     sorted_progress = progress['progress_pct'].sort_values().reset_index(drop=True)
-    ax2.fill_between(range(len(sorted_progress)), sorted_progress, alpha=0.3, color='steelblue')
-    ax2.plot(sorted_progress.values, color='steelblue', linewidth=2)
+    n_ranks = len(sorted_progress)
+    # Use 1-indexed ranks so the axis naturally spans 1..N tasks (not 0..N-1)
+    ranks = range(1, n_ranks + 1)
+    ax2.fill_between(ranks, sorted_progress, alpha=0.3, color='steelblue')
+    ax2.plot(ranks, sorted_progress.values, color='steelblue', linewidth=2)
     ax2.axhline(y=100, color='green', linestyle='--', linewidth=2, label='100% (Target)')
     ax2.set_xlabel('Task rank (sorted by progress)')
     ax2.set_ylabel('Progress (%)')
     ax2.set_title('Cumulative Progress Distribution')
+    if n_ranks > 0:
+        ax2.set_xlim(1, n_ranks)
     ax2.set_ylim(0, 110)
-    ax2.legend(loc='lower right')
+
+    if n_ranks > 0:
+        # Keep ticks within [1, N] and ensure the max tick at N exists.
+        current_ticks = list(ax2.get_xticks())
+        ticks_in_range = [t for t in current_ticks if 1 <= t <= n_ranks]
+        if not any(abs(t - 1) < 1e-9 for t in ticks_in_range):
+            ticks_in_range = [1, *ticks_in_range]
+        if not any(abs(t - n_ranks) < 1e-9 for t in ticks_in_range):
+            ticks_in_range.append(n_ranks)
+        ax2.set_xticks(ticks_in_range)
     
     plt.tight_layout()
     plt.show()
