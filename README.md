@@ -162,7 +162,8 @@ The `discover/` module provides tools for monitoring training runs, tracking pro
 **Quick start:**
 
 ```python
-from discover import load_df, training_overview
+from discover import load_df
+from discover.plots import training_overview
 
 df = load_df()  # Uses cache; add refresh=True to re-fetch
 training_overview(df, target_step=5_000_000)

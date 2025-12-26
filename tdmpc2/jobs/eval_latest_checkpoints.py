@@ -15,7 +15,7 @@ import subprocess
 import yaml
 from pathlib import Path
 
-from discover import parse_step
+from discover.progress import parse_step
 
 
 def find_best_checkpoint_for_task(logs_dir: Path, task: str) -> Path | None:

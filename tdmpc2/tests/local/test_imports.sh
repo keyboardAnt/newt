@@ -10,8 +10,8 @@ cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 
 echo "=== Testing imports ==="
 
-echo -n "1. parse_step from discover: "
-python -c "from discover import parse_step; print(parse_step('1_000_000.pt'))"
+echo -n "1. parse_step from discover.progress: "
+python -c "from discover.progress import parse_step; print(parse_step('1_000_000.pt'))"
 
 echo -n "2. Trainer import: "
 python -c "from trainer import Trainer; print('OK')"

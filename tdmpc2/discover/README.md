@@ -25,7 +25,8 @@ python -m discover restart --submit
 ### Python API
 
 ```python
-from discover import load_df, training_overview, plot_max_steps
+from discover import load_df
+from discover.plots import training_overview, plot_max_steps
 
 # Load runs (uses cache)
 df = load_df(refresh=False)
@@ -124,15 +125,19 @@ logs/<task>/<seed>/<run_id>/run_info.yaml   # older nested
 
 ```
 discover/
-├── cli.py           # Unified CLI (python -m discover)
-├── api.py           # Simple API: load_df()
-├── config.py        # Centralized configuration
-├── runs.py          # Run discovery (local logs + W&B)
-├── cache.py         # Caching and data loading
-├── analysis.py      # Data analysis functions
-├── plots.py         # Visualization functions
-├── eval.py          # Evaluation and video management
-└── browse_runs.ipynb    # Interactive notebook (visualizations only)
+├── cli.py              # Unified CLI (python -m discover)
+├── api.py              # Simple API: load_df()
+├── config.py           # Centralized configuration
+├── wandb_connector.py  # Centralized W&B API access
+├── runs.py             # Run discovery (local logs + W&B)
+├── cache.py            # Caching and data loading
+├── liveness.py         # Heartbeat + W&B liveness detection
+├── progress.py         # Progress helpers (attach_max_step, etc.)
+├── plots.py            # Visualization functions
+├── eval.py             # Evaluation and video management
+├── cleanup/
+│   └── model_registry.py  # W&B artifact cleanup
+└── browse_runs.ipynb   # Interactive notebook
 ```
 
 ## Understanding Run Status
@@ -214,7 +219,7 @@ df = load_df(refresh=True)
 ### Configuration (`discover.config`)
 
 ```python
-from discover import get_logs_dir, get_target_step, get_wandb_project
+from discover.config import get_logs_dir, get_target_step, get_wandb_project
 
 # All have environment variable overrides:
 # DISCOVER_LOGS_DIR, DISCOVER_TARGET_STEP, DISCOVER_WANDB_PROJECT

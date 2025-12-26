@@ -232,7 +232,7 @@ export TASK
 eval $(python - <<'PY'
 import os, yaml
 from pathlib import Path
-from discover import parse_step
+from discover.progress import parse_step
 
 task = os.environ.get("TASK", "")
 logs_dir = Path("logs")

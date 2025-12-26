@@ -9,7 +9,7 @@ from termcolor import colored
 from tqdm import tqdm
 from tensordict.tensordict import TensorDict
 
-from discover import parse_step
+from discover.progress import parse_step
 
 from common import barrier
 from common.auto_utd import AdaptiveUTD
