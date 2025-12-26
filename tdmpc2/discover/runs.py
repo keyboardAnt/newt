@@ -139,6 +139,7 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
             "wandb_run_id": read_text_if_exists(wandb_id_path),
             "run_dir": str(run_dir.resolve()),
             "ckpt_path": str(best_ckpt.resolve()) if best_ckpt else None,
+            "videos": videos,
         })
 
     sys.stderr.write(f"\r  {len(rows)} local runs found        \n")

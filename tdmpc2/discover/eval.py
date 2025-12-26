@@ -34,8 +34,9 @@ def find_run_videos(run_dir: Path) -> List[Path]:
     videos = []
     # Wandb media directory - new flat structure
     videos.extend(run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
-    # Wandb media directory - old nested structure (e.g., task/seed/exp_name/wandb/...)
-    videos.extend(run_dir.glob("**/wandb/run-*/files/media/videos/**/*.mp4"))
+    # Wandb media directory - old nested structure (check only one level deep to avoid slow recursive scan)
+    # videos.extend(run_dir.glob("**/wandb/run-*/files/media/videos/**/*.mp4"))
+    videos.extend(run_dir.glob("*/wandb/run-*/files/media/videos/**/*.mp4"))
     # Direct video saves
     video_dir = run_dir / "videos"
     if video_dir.is_dir():
@@ -93,7 +94,42 @@ def tasks_ready_for_eval(
     
     ready = best[best['max_step'] >= min_step].copy()
     
-    ready['video_paths'] = ready['task'].apply(lambda t: find_task_videos(t, logs_dir))
+    # OPTIMIZATION: Use cached video paths if available, or fall back to run_dir lookup
+    print(f"Checking for videos in {len(ready)} ready tasks...")
+    
+    # Pre-compute run directory map for fallback
+    ready_tasks = set(ready['task'])
+    relevant_runs = df[df['task'].isin(ready_tasks) & df['run_dir'].notna()]
+    task_to_run_dirs = relevant_runs.groupby('task')['run_dir'].apply(list).to_dict()
+    
+    # Pre-compute cached videos map to avoid O(N*M) dataframe filtering in loop
+    task_to_video_lists = {}
+    if 'videos' in df.columns:
+        relevant_videos = df[df['task'].isin(ready_tasks) & df['videos'].notna()]
+        task_to_video_lists = relevant_videos.groupby('task')['videos'].apply(list).to_dict()
+    else:
+        print("⚠️  Cache is outdated (missing video info). Run 'make refresh' for fast execution.")
+    
+    def get_videos_fast(task: str) -> List[str]:
+        videos = []
+        
+        # 1. Try using cached videos from the dataframe
+        if task in task_to_video_lists:
+            for v_list in task_to_video_lists[task]:
+                if isinstance(v_list, list):
+                    videos.extend(v_list)
+        
+        # 2. If no videos found in cache (or cache too old), check directories
+        if not videos:
+            run_dirs = task_to_run_dirs.get(task, [])
+            for d in run_dirs:
+                try:
+                    videos.extend(str(v) for v in find_run_videos(Path(d)))
+                except Exception:
+                    continue
+        return sorted(set(videos))
+        
+    ready['video_paths'] = ready['task'].apply(get_videos_fast)
     ready['has_videos'] = ready['video_paths'].apply(lambda x: len(x) > 0)
     ready['progress_pct'] = (100 * ready['max_step'] / target_step).round(1)
     ready = ready.sort_values('max_step', ascending=False)
@@ -330,10 +366,43 @@ def collect_videos(
     best = best_step_by_task(df)
     ready = best[best['max_step'] >= min_step].copy()
     
+    # OPTIMIZATION: Use cached video paths if available, or fall back to run_dir lookup
+    print(f"Checking for videos in {len(ready)} ready tasks...")
+    
+    # Pre-compute run directory map for fallback
+    ready_tasks = set(ready['task'])
+    relevant_runs = df[df['task'].isin(ready_tasks) & df['run_dir'].notna()]
+    task_to_run_dirs = relevant_runs.groupby('task')['run_dir'].apply(list).to_dict()
+    
+    # Pre-compute cached videos map to avoid O(N*M) dataframe filtering in loop
+    task_to_video_lists = {}
+    if 'videos' in df.columns:
+        relevant_videos = df[df['task'].isin(ready_tasks) & df['videos'].notna()]
+        task_to_video_lists = relevant_videos.groupby('task')['videos'].apply(list).to_dict()
+    
     video_info = []
     for _, row in ready.iterrows():
         task = row['task']
-        videos = find_task_videos(task, logs_dir)
+        videos = []
+        
+        # 1. Try using cached videos from the dataframe
+        if task in task_to_video_lists:
+            for v_list in task_to_video_lists[task]:
+                if isinstance(v_list, list):
+                    videos.extend(v_list)
+        
+        # 2. If no videos found in cache (or cache too old), check directories
+        if not videos:
+            for d in task_to_run_dirs.get(task, []):
+                try:
+                    # Only scan if we didn't get them from cache (avoid double counting if cache was partial)
+                    found = [str(v) for v in find_run_videos(Path(d))]
+                    videos.extend(found)
+                except Exception:
+                    continue
+        
+        videos = sorted(set(videos))
+        
         if videos:
             video_info.append({
                 'task': task,

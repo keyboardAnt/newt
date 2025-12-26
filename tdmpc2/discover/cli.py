@@ -13,6 +13,7 @@ Commands:
     restart     Show/submit jobs for stalled tasks
     eval        List tasks needing eval or submit eval jobs
     videos      Collect or prune videos
+    cleanup-models  Cleanup W&B model artifacts (keep only latest checkpoint per expert)
 """
 
 from __future__ import annotations
@@ -479,12 +480,20 @@ def cmd_eval(args) -> int:
         if args.submit:
             script_path = output_dir / 'run_eval_need_videos.lsf'
             print(f"\nSubmitting eval jobs from {script_path}...")
-            result = subprocess.run(
-                ['bsub', '<', str(script_path)],
-                shell=True,
-                capture_output=True,
-                text=True,
-            )
+            # IMPORTANT: `bsub` reads the job script from stdin.
+            # Using `['bsub', '<', ...]` does NOT perform shell redirection; it makes bsub
+            # wait for stdin and appears to "hang". Feed the file via stdin instead.
+            try:
+                with script_path.open("rb") as f:
+                    result = subprocess.run(
+                        ["bsub"],
+                        stdin=f,
+                        capture_output=True,
+                        text=True,
+                    )
+            except OSError as e:
+                print(f"  ✗ Error opening script: {e}")
+                return 1
             if result.returncode == 0:
                 print(f"  ✓ {result.stdout.strip()}")
             else:
@@ -537,6 +546,40 @@ def cmd_videos(args) -> int:
         
         prune_old_videos(output_dir, dry_run=args.dry_run)
     
+    return 0
+
+
+def cmd_cleanup_models(args) -> int:
+    """Cleanup W&B model artifacts: keep only the max-step checkpoint per expert."""
+    if not args.wandb_project:
+        print("❌ W&B disabled (no --wandb-project). Nothing to clean.")
+        return 1
+
+    from .cleanup.wandb_models import (
+        apply_cleanup_plan,
+        plan_cleanup_latest_checkpoint_per_expert,
+        print_cleanup_plan,
+    )
+
+    plan = plan_cleanup_latest_checkpoint_per_expert(
+        project_path=args.wandb_project,
+        protect_aliases=args.protect_alias,
+        name_regex=args.name_regex,
+        exact_collections=args.collection,
+        max_collections=args.max_collections,
+    )
+    print_cleanup_plan(plan)
+
+    if not args.apply:
+        print("Dry-run only. Re-run with --apply to delete the artifacts above.")
+        return 0
+
+    deleted = apply_cleanup_plan(
+        plan,
+        max_delete=args.max_delete,
+        force=args.force,
+    )
+    print(f"\n✅ Deleted {deleted:,} artifacts.")
     return 0
 
 
@@ -624,6 +667,52 @@ def main(argv: Optional[List[str]] = None) -> int:
                           help='Copy files instead of creating symlinks')
     p_videos.add_argument('--dry-run', action='store_true',
                           help='For prune: show what would be removed')
+
+    # cleanup-models
+    p_cleanup = subparsers.add_parser(
+        'cleanup-models',
+        help="Cleanup W&B model artifacts (keep only latest checkpoint per expert)",
+    )
+    p_cleanup.add_argument(
+        '--apply',
+        action='store_true',
+        help='Actually delete artifacts (default: dry-run)',
+    )
+    p_cleanup.add_argument(
+        '--max-delete',
+        type=int,
+        default=500,
+        help='Safety cap on number of artifacts to delete (default: 500)',
+    )
+    p_cleanup.add_argument(
+        '--force',
+        action='store_true',
+        help='Continue if a delete fails (prints failures)',
+    )
+    p_cleanup.add_argument(
+        '--name-regex',
+        type=str,
+        default=None,
+        help='Optional regex filter on artifact *collection* name (process only matches; speeds up scans a lot)',
+    )
+    p_cleanup.add_argument(
+        '--collection',
+        action='append',
+        default=None,
+        help='Exact artifact collection name to process (repeatable). Avoids project-wide scan.',
+    )
+    p_cleanup.add_argument(
+        '--max-collections',
+        type=int,
+        default=None,
+        help='Optional cap on number of matched collections to process (useful for quick testing)',
+    )
+    p_cleanup.add_argument(
+        '--protect-alias',
+        action='append',
+        default=["latest", "best", "prod", "production", "staging"],
+        help='Artifact aliases to never delete (repeatable). Default protects common aliases.',
+    )
     
     args = parser.parse_args(argv)
     
@@ -650,6 +739,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         'restart': cmd_restart,
         'eval': cmd_eval,
         'videos': cmd_videos,
+        'cleanup-models': cmd_cleanup_models,
     }
     
     return handlers[args.command](args)

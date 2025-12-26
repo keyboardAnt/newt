@@ -56,6 +56,7 @@ All commands are available via `python -m discover <command>` or `make <target>`
 | `eval submit --submit` | `make submit-eval` | Generate & submit eval jobs |
 | `videos collect` | `make videos-collect` | Collect videos for presentation |
 | `videos prune` | `make videos-prune` | Remove old checkpoint videos |
+| `cleanup-models` | *(none)* | W&B cleanup: keep only latest checkpoint per expert (dry-run by default) |
 
 ### Common Options
 
@@ -71,6 +72,31 @@ python -m discover --help                   # Show all options
 
 **Note:** By default, commands only show official tasks from `tasks.json` (225 tasks).
 Use `--all` to include all runs in the cache (including test/debug runs like `smoke-test`, `default`, etc.).
+
+## W&B storage cleanup: keep only the latest checkpoint per expert
+
+Training logs checkpoints to W&B as artifacts of type `model`, with names that include the step:
+`<task>-<exp_name>-<seed>-<step_with_underscores>`. This means a long run creates many large artifact
+entries. The `cleanup-models` command keeps only the **max-step** checkpoint per
+`<task>-<exp_name>-<seed>` and deletes the rest.
+
+- **Dry-run**:
+
+```bash
+python -m discover --wandb-project wm-planning/mmbench cleanup-models
+```
+
+- **Apply deletions** (with a safety cap):
+
+```bash
+python -m discover --wandb-project wm-planning/mmbench cleanup-models --apply --max-delete 5000
+```
+
+- **Optional filtering** (only delete names matching regex):
+
+```bash
+python -m discover --wandb-project wm-planning/mmbench cleanup-models --name-regex 'expert-' --apply
+```
 
 ## Log Directory Structure
 
