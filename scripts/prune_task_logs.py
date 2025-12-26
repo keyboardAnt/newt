@@ -2,9 +2,8 @@
 """
 Prune tdmpc2/logs/<task>/ by keeping only one run per task.
 
-Modes:
-  --keep latest   : keep the lexicographically latest run_id (timestamp-based)
-  --keep best     : keep the run with highest checkpoint/heartbeat step
+Keeps:
+  - the lexicographically latest run_id (timestamp-based)
 
 Actions on non-kept runs (configurable):
   --delete-run-dirs            : delete whole run directories (DANGEROUS)
@@ -87,7 +86,6 @@ def main() -> int:
 
     ap = argparse.ArgumentParser(description="Prune tdmpc2/logs/<task> runs.")
     ap.add_argument("--logs-dir", type=Path, default=logs_dir)
-    ap.add_argument("--keep", choices=["latest", "best"], default="best")
     ap.add_argument("--apply", action="store_true", help="Execute deletions (default: dry-run).")
     g = ap.add_mutually_exclusive_group(required=False)
     g.add_argument("--delete-run-dirs", action="store_true", help="Delete whole run dirs (dangerous).")
@@ -109,10 +107,7 @@ def main() -> int:
         if len(runs) <= 1:
             continue
 
-        if args.keep == "latest":
-            keep = max(runs, key=lambda p: p.name)
-        else:
-            keep = max(runs, key=_run_score)
+        keep = max(runs, key=lambda p: p.name)
 
         for run_dir in sorted(runs, key=lambda p: p.name):
             if run_dir == keep:

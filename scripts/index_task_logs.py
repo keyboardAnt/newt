@@ -6,7 +6,6 @@ Writes:
   logs/<task>/index.jsonl   (one JSON object per run dir)
 Creates/updates:
   logs/<task>/latest -> logs/<task>/<run_id>
-  logs/<task>/best   -> logs/<task>/<run_id>  (highest step seen)
 
 This is safe to run any time. By default it *writes the index* but does not
 touch symlinks unless --update-links is passed.
@@ -54,6 +53,25 @@ def _max_ckpt_step(run_dir: Path) -> Optional[int]:
             continue
         best = step if best is None else max(best, step)
     return best
+
+
+def _best_ckpt(run_dir: Path) -> tuple[Optional[int], Optional[Path]]:
+    """Return (best_step, best_path) for agent checkpoints in run_dir/checkpoints."""
+    ckpt_dir = run_dir / "checkpoints"
+    if not ckpt_dir.is_dir():
+        return (None, None)
+    best_step: Optional[int] = None
+    best_path: Optional[Path] = None
+    for p in ckpt_dir.glob("*.pt"):
+        if p.stem.endswith("_trainer"):
+            continue
+        step = _parse_step_from_name(p.stem)
+        if step is None:
+            continue
+        if best_step is None or step > best_step:
+            best_step = step
+            best_path = p
+    return (best_step, best_path)
 
 
 def _read_json(path: Path) -> Optional[dict]:
@@ -112,11 +130,19 @@ def build_rows_for_task(task_dir: Path) -> list[RunRow]:
 
         hb_step = hb.get("progress", {}).get("step") if isinstance(hb.get("progress"), dict) else None
         hb_status = hb.get("status")
-        ckpt_path = None
-        if isinstance(hb.get("checkpoint"), dict):
-            ckpt_path = hb["checkpoint"].get("path")
+        # Prefer local filesystem truth: the highest-step checkpoint file under run_dir/checkpoints.
+        best_ckpt_step, best_ckpt_path = _best_ckpt(run_dir)
+        ckpt_path = str(best_ckpt_path.resolve()) if best_ckpt_path else None
 
-        ckpt_step = _max_ckpt_step(run_dir)
+        # Fallback: heartbeat checkpoint.path (may be stale after migrations).
+        if ckpt_path is None and isinstance(hb.get("checkpoint"), dict):
+            hb_path = hb["checkpoint"].get("path")
+            if isinstance(hb_path, str) and hb_path:
+                # Try to repair common stale absolute paths by mapping to this run_dir/checkpoints/.
+                candidate = run_dir / "checkpoints" / Path(hb_path).name
+                ckpt_path = str(candidate.resolve()) if candidate.is_file() else None
+
+        ckpt_step = best_ckpt_step if best_ckpt_step is not None else _max_ckpt_step(run_dir)
         max_step = ckpt_step if ckpt_step is not None else (hb_step if isinstance(hb_step, int) else None)
 
         wandb_run_id = None
@@ -150,6 +176,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Index tdmpc2/logs/<task> run directories.")
     ap.add_argument("--logs-dir", type=Path, default=logs_dir)
     ap.add_argument("--update-links", action="store_true", help="Update latest/best symlinks.")
+    ap.add_argument(
+        "--update-run-links",
+        action="store_true",
+        help="For each run with checkpoints/, create checkpoint_latest*.pt symlinks inside the run dir.",
+    )
     args = ap.parse_args()
 
     logs_dir = args.logs_dir.expanduser().resolve()
@@ -172,15 +203,33 @@ def main() -> int:
         # latest: lexicographically newest run_id (timestamp prefix)
         latest = max(rows, key=lambda r: r.run_id)
 
-        # best: highest max_step, tie-break by run_id
-        def _best_key(r: RunRow):
-            return (r.max_step if r.max_step is not None else -1, r.run_id)
-
-        best = max(rows, key=_best_key)
-
         if args.update_links:
             _atomic_symlink(task_dir / "latest", Path(latest.run_id))
-            _atomic_symlink(task_dir / "best", Path(best.run_id))
+            # Remove legacy 'best' link/file if present (we only keep 'latest' now).
+            (task_dir / "best").unlink(missing_ok=True)
+            (task_dir / "best.json").unlink(missing_ok=True)
+
+        if args.update_run_links:
+            # Best-effort: add checkpoint_latest symlinks inside each run dir.
+            for r in rows:
+                run_dir = Path(r.run_dir)
+                ckpt_dir = run_dir / "checkpoints"
+                if not ckpt_dir.is_dir():
+                    continue
+                best_step, best_path = _best_ckpt(run_dir)
+                if best_path is None:
+                    continue
+                try:
+                    _atomic_symlink(run_dir / "checkpoint_latest.pt", Path("checkpoints") / best_path.name)
+                except Exception:
+                    pass
+                # Trainer state file next to the agent checkpoint
+                trainer = ckpt_dir / f"{best_path.stem}_trainer.pt"
+                if trainer.is_file():
+                    try:
+                        _atomic_symlink(run_dir / "checkpoint_latest_trainer.pt", Path("checkpoints") / trainer.name)
+                    except Exception:
+                        pass
 
     print("done")
     return 0

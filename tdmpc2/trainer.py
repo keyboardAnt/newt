@@ -14,7 +14,7 @@ from discover import parse_step
 from common import barrier
 from common.auto_utd import AdaptiveUTD
 from common.heartbeat import HeartbeatWriter
-from common.logs_ux import maybe_update_task_best, update_run_checkpoint_symlinks
+from common.logs_ux import update_run_checkpoint_symlinks
 from common.run_info import update_run_info_resume
 
 
@@ -154,8 +154,6 @@ class Trainer():
             # UX helpers (rank 0): update checkpoint_latest symlinks + per-task "best" pointer.
             if self.cfg.rank == 0:
                 update_run_checkpoint_symlinks(self.cfg.work_dir, identifier)
-                task_dir = Path(self.cfg.work_dir).parent
-                maybe_update_task_best(task_dir, Path(self.cfg.work_dir), int(self._step))
 
             if self.cfg.rank == 0:
                 print(
