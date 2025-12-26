@@ -1,16 +1,16 @@
 #!/bin/bash
 # Auto-generated eval script for tasks needing videos
-# Generated: 2025-12-27T00:32:00.351314
-# Tasks: 68
+# Generated: 2025-12-27T00:32:00.357538
+# Tasks: 15
 
-#BSUB -J newt-eval-videos[1-68]
+#BSUB -J newt-eval-videos-ms[1-15]
 #BSUB -q short-gpu
 #BSUB -n 1
-#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -gpu "num=1"
 #BSUB -R "rusage[mem=16GB,tmp=10240]"  # tmp is MB; 10240 ~= 10 GiB
 #BSUB -W 04:00
-#BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval-videos.%J.%I.log
-#BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval-videos.%J.%I.log
+#BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval-videos-ms.%J.%I.log
+#BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-eval-videos-ms.%J.%I.log
 
 #BSUB -app nvidia-gpu
 #BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
@@ -19,7 +19,7 @@ cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
 
 pip install -q "wandb[media]"
 
-TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_need_eval.txt)
+TASK=$(sed -n "${LSB_JOBINDEX}p" jobs/tasks_need_eval_ms.txt)
 echo "LSF job index: ${LSB_JOBINDEX}, task: ${TASK}"
 
 export TASK
