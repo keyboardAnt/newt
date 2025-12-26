@@ -11,6 +11,7 @@ import sys
 import time
 import warnings
 warnings.filterwarnings('ignore')
+import logging
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ import torch
 import torch.nn as nn
 import hydra
 from hydra.core.config_store import ConfigStore
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import OmegaConf
 from termcolor import colored
 from tensordict import TensorDict
 
@@ -36,6 +39,8 @@ from trainer import Trainer
 
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
+
+_LOG = logging.getLogger(__name__)
 
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
@@ -98,6 +103,52 @@ def update_run_info(work_dir: Path, status: str, final_step: int = None, error: 
     if error:
         info['error'] = error[:500]  # Truncate long errors
     run_info_path.write_text(yaml.dump(info, default_flow_style=False, sort_keys=False))
+
+
+def write_hydra_snapshot(cfg_composed, work_dir: Path) -> None:
+	"""Persist Hydra-composed config + overrides into <work_dir>/.hydra/.
+
+	We keep Hydra output dirs disabled (no tdmpc2/outputs/...), but still want the
+	exact config used for each run colocated with run artifacts.
+	"""
+	work_dir = Path(work_dir)
+	hydra_dir = work_dir / ".hydra"
+	try:
+		hydra_dir.mkdir(parents=True, exist_ok=True)
+	except Exception:
+		_LOG.exception("[hydra-snapshot] Failed to create %s", hydra_dir)
+		return
+
+	# 1) Composed job config (what train.py received from Hydra)
+	try:
+		config_path = hydra_dir / "config.yaml"
+		if OmegaConf.is_config(cfg_composed):
+			config_path.write_text(OmegaConf.to_yaml(cfg_composed))
+		else:
+			config_path.write_text(yaml.dump(cfg_composed, sort_keys=False))
+	except Exception:
+		_LOG.exception("[hydra-snapshot] Failed to write composed config to %s", hydra_dir / "config.yaml")
+
+	# 2) Hydra runtime config (hydra.yaml) + overrides list (overrides.yaml)
+	try:
+		hcfg = HydraConfig.get()
+	except Exception:
+		# This can happen if HydraConfig isn't initialized yet (should be rare under @hydra.main).
+		_LOG.exception("[hydra-snapshot] Failed to access HydraConfig.get(); skipping hydra.yaml/overrides.yaml")
+		return
+
+	try:
+		(hydra_dir / "hydra.yaml").write_text(OmegaConf.to_yaml(hcfg))
+	except Exception:
+		_LOG.exception("[hydra-snapshot] Failed to write hydra runtime config to %s", hydra_dir / "hydra.yaml")
+
+	try:
+		overrides = list(getattr(hcfg.overrides, "task", []) or [])
+		(hydra_dir / "overrides.yaml").write_text(
+			yaml.dump(overrides, default_flow_style=False, sort_keys=False)
+		)
+	except Exception:
+		_LOG.exception("[hydra-snapshot] Failed to write overrides to %s", hydra_dir / "overrides.yaml")
 
 
 class DDPWrapper(nn.Module):
@@ -302,10 +353,20 @@ def load_demos(
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def launch(cfg: Config):
+	# Ensure exceptions from helper utilities are visible even if the environment
+	# doesn't configure logging by default.
+	logging.basicConfig(
+		level=logging.INFO,
+		format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+	)
 	assert torch.cuda.is_available()
 	assert cfg.steps > 0, 'Must train for at least 1 step.'
+	# Keep the Hydra-composed config around so we can snapshot it into work_dir/.hydra/
+	cfg_composed = cfg
 	cfg = parse_cfg(cfg)
 	print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
+	# Persist Hydra config/overrides into the run directory for reproducibility.
+	write_hydra_snapshot(cfg_composed, cfg.work_dir)
 	
 	# Write run metadata for easier debugging and log discovery
 	write_run_info(cfg, cfg.work_dir)
