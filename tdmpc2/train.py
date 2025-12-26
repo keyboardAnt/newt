@@ -31,6 +31,7 @@ from tensordict import TensorDict
 from common import barrier, set_seed
 from common.buffer import Buffer, EnsembleBuffer
 from common.logger import Logger
+from common.logs_ux import ensure_task_latest
 from common.world_model import WorldModel
 from config import Config, split_by_rank, parse_cfg
 from envs import make_env
@@ -367,6 +368,13 @@ def launch(cfg: Config):
 	print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
 	# Persist Hydra config/overrides into the run directory for reproducibility.
 	write_hydra_snapshot(cfg_composed, cfg.work_dir)
+
+	# Convenience: logs/<task>/latest -> this run directory (rank 0 only).
+	try:
+		task_dir = Path(cfg.work_dir).parent
+		ensure_task_latest(task_dir, Path(cfg.work_dir))
+	except Exception:
+		_LOG.exception("[logs-ux] Failed to update task latest symlink (continuing).")
 	
 	# Write run metadata for easier debugging and log discovery
 	write_run_info(cfg, cfg.work_dir)

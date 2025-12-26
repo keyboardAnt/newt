@@ -3,12 +3,14 @@ import datetime
 import re
 from collections import defaultdict
 from pathlib import Path
+import logging
 
 import numpy as np
 from termcolor import colored
 
 from common import TASK_SET
 
+_LOG = logging.getLogger(__name__)
 
 CONSOLE_FORMAT = [
 	("iteration", "I", "int"),
@@ -133,17 +135,31 @@ class Logger:
 		self._eval = []
 		print_run(cfg)
 		import wandb
+
+		# Prefer a browseable run name in W&B (align with local run_id dir name).
+		# Use task as the group (so all runs for a task cluster together).
+		run_name = str(getattr(cfg, "run_id", None) or cfg.seed)
+		job_type = getattr(cfg, "run_kind", None) or ("eval" if str(cfg.exp_name).startswith("eval_") else "train")
 		wandb.init(
 			project=self.project,
 			entity=self.entity,
-			name=str(cfg.seed),
-			group=self._group,
-			tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
+			name=run_name,
+			group=str(cfg.task),
+			job_type=str(job_type),
+			tags=cfg_to_group(cfg, return_list=True)
+				+ [f"seed:{cfg.seed}", f"exp:{cfg.exp_name}", f"model:{getattr(cfg, 'model_size', 'none')}"],
 			dir=self._log_dir,
 			config=cfg,
 		)
 		print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
 		self._wandb = wandb
+
+		# Persist the W&B run ID for local↔wandb joining in discover/.
+		try:
+			run_id_path = Path(self._log_dir) / "wandb_run_id.txt"
+			run_id_path.write_text(str(getattr(self._wandb.run, "id", "")) + "\n")
+		except Exception:
+			_LOG.exception("[Logger] Failed to write wandb_run_id.txt (continuing).")
 		self._video = (
 			VideoRecorder(cfg, self._wandb)
 			if self._wandb and cfg.save_video
