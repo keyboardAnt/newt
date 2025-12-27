@@ -19,10 +19,8 @@ mujoco-ant
 mujoco-halfcheetah
 mujoco-hopper
 mujoco-inverted-pendulum
-mw-box-close
 mw-drawer-close
 mw-hand-insert
-mw-push-back
 og-ant
 og-ant-arena
 og-ant-bottleneck
@@ -56,7 +54,6 @@ rd-flat-block-in-bin
 rd-open-slide
 rd-push-blue
 rd-push-green
-spinner-jump
 spinner-spin-backward-four
 spinner-spin-four
 walker-arabesque
