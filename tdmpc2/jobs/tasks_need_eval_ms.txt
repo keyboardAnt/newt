@@ -1,2 +1,1 @@
-ms-push-screwdriver
 ms-push-sponge

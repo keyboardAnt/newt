@@ -1,9 +1,9 @@
 #!/bin/bash
 # Auto-generated eval script for tasks needing videos
-# Generated: 2025-12-27T06:43:04.283466
-# Tasks: 2
+# Generated: 2025-12-27T06:56:34.162727
+# Tasks: 1
 
-#BSUB -J newt-eval-videos-ms[1-2]
+#BSUB -J newt-eval-videos-ms[1-1]
 #BSUB -q short-gpu
 #BSUB -n 1
 #BSUB -gpu "num=1:mode=exclusive_process"
