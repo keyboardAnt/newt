@@ -318,6 +318,7 @@ def build_task_progress(
     include_unknown: bool = False,
     ttl_s: Optional[int] = None,
     now: Optional[datetime] = None,
+    logs_dir: Optional[Path] = None,
 ) -> "pd.DataFrame":
     """Build a per-task progress table aligned to official task list.
     
@@ -325,6 +326,7 @@ def build_task_progress(
     - tasks.json as the task universe (via load_task_list())
     - Heartbeat-first liveness (heartbeat OR wandb = active)
     - Step from max(ckpt_step, wandb_summary_step, heartbeat_step)
+    - Live filesystem scan for video_step (ensures consistency with eval list)
     
     Args:
         df: DataFrame with all runs (from load_df())
@@ -333,6 +335,7 @@ def build_task_progress(
         include_unknown: If True, include tasks not in task_list.
         ttl_s: Heartbeat TTL in seconds
         now: Current time for age calculation
+        logs_dir: Path to logs directory for live video scan. If None, uses cached data.
     
     Returns:
         DataFrame with columns:
@@ -358,6 +361,9 @@ def build_task_progress(
     if df.empty:
         result = pd.DataFrame({'task': task_list})
         result['max_step'] = 0
+        result['ckpt_step_max'] = 0
+        result['video_step_max'] = 0
+        result['needs_eval_video'] = False
         result['wandb_running_runs'] = 0
         result['heartbeat_alive_runs'] = 0
         result['is_active'] = False
@@ -398,6 +404,31 @@ def build_task_progress(
         return max(max_step, hb_step)
     
     max_steps = df_live.groupby('task').apply(_get_best_step, include_groups=False)
+
+    # Compute ckpt_step_max and video_step_max via live filesystem scan for consistency.
+    # This ensures discover tasks shows the same values as eval list / videos collect.
+    if logs_dir is not None:
+        from .step_utils import compute_task_steps
+        
+        # Only scan tasks we care about
+        tasks_to_scan = list(official_set) if not include_unknown else list(official_set | set(unknown_tasks))
+        step_info = compute_task_steps(logs_dir, tasks_to_scan)
+        
+        ckpt_step_max = pd.Series({t: v[0] for t, v in step_info.items()})
+        video_step_max = pd.Series({t: v[1] for t, v in step_info.items()})
+    else:
+        # Fall back to cached data from the dataframe
+        if 'ckpt_step' in df_live.columns:
+            ckpt_steps = pd.to_numeric(df_live['ckpt_step'], errors='coerce').fillna(0)
+            ckpt_step_max = ckpt_steps.groupby(df_live['task']).max()
+        else:
+            ckpt_step_max = pd.Series(dtype="float")
+
+        if 'video_step' in df_live.columns:
+            video_steps = pd.to_numeric(df_live['video_step'], errors='coerce').fillna(0)
+            video_step_max = video_steps.groupby(df_live['task']).max()
+        else:
+            video_step_max = pd.Series(dtype="float")
     
     # Wandb running count
     wandb_running_mask = df_live['wandb_alive'] if 'wandb_alive' in df_live.columns else pd.Series(False, index=df_live.index)
@@ -415,6 +446,9 @@ def build_task_progress(
     
     result = pd.DataFrame({'task': all_tasks})
     result['max_step'] = result['task'].map(max_steps).fillna(0)
+    result['ckpt_step_max'] = result['task'].map(ckpt_step_max).fillna(0)
+    result['video_step_max'] = result['task'].map(video_step_max).fillna(0)
+    result['needs_eval_video'] = (result['ckpt_step_max'] > 0) & (result['video_step_max'] < result['ckpt_step_max'])
     result['wandb_running_runs'] = result['task'].map(wandb_counts).fillna(0).astype(int)
     result['heartbeat_alive_runs'] = result['task'].map(hb_counts).fillna(0).astype(int)
     result['is_active'] = (result['wandb_running_runs'] > 0) | (result['heartbeat_alive_runs'] > 0)

@@ -81,11 +81,12 @@ def cmd_status(args) -> int:
     show_all = getattr(args, 'show_all', False)
     
     # Use shared helper aligned to official task list (single source of truth: discover.liveness)
+    # Pass logs_dir for live filesystem scan (ensures consistency with eval list/videos collect)
     # If --all, pass task_list=None and include_unknown=True to show everything
     if show_all:
-        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
+        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True, logs_dir=args.logs_dir)
     else:
-        progress = build_task_progress(df, target_step=target)
+        progress = build_task_progress(df, target_step=target, logs_dir=args.logs_dir)
     
     n_tasks = len(progress)
     steps = progress['max_step']
@@ -99,6 +100,7 @@ def cmd_status(args) -> int:
     pct_complete = 100 * completed / n_tasks
     avg_progress = progress['progress_pct'].mean()
     median_progress = progress['progress_pct'].median()
+    needs_eval_video = int(progress.get('needs_eval_video', 0).sum()) if 'needs_eval_video' in progress.columns else 0
     
     print("=" * 60)
     print(f"{'TRAINING PROGRESS SUMMARY':^60}")
@@ -110,6 +112,8 @@ def cmd_status(args) -> int:
     print(f"  🔵 Running:          {running:>6} ({100*running/n_tasks:.1f}%)  <- active (see discover.liveness)")
     print(f"  🟠 Stalled:          {stalled:>6} ({100*stalled/n_tasks:.1f}%)  <- needs restart")
     print(f"  🔴 Not Started:      {not_started:>6} ({100*not_started/n_tasks:.1f}%)")
+    if 'needs_eval_video' in progress.columns:
+        print(f"  🎞️  Video needs eval: {needs_eval_video:>6} ({100*needs_eval_video/n_tasks:.1f}%)")
     print("-" * 60)
     print(f"  Average progress:    {avg_progress:>6.1f}%")
     print(f"  Median progress:     {median_progress:>6.1f}%")
@@ -167,10 +171,11 @@ def cmd_tasks(args) -> int:
     show_all = getattr(args, 'show_all', False)
     
     # Use shared helper aligned to tasks.json (single source of truth: discover.liveness)
+    # Pass logs_dir for live filesystem scan (ensures consistency with eval list/videos collect)
     if show_all:
-        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
+        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True, logs_dir=args.logs_dir)
     else:
-        progress = build_task_progress(df, target_step=target)
+        progress = build_task_progress(df, target_step=target, logs_dir=args.logs_dir)
     
     # Apply filters
     if args.not_started:
@@ -188,28 +193,38 @@ def cmd_tasks(args) -> int:
     # Output
     if args.format == 'json':
         import json
-        cols = ['task', 'max_step', 'progress_pct', 'heartbeat_alive_runs', 'wandb_running_runs', 'category']
+        cols = [
+            'task', 'max_step', 'progress_pct',
+            'ckpt_step_max', 'video_step_max', 'needs_eval_video',
+            'heartbeat_alive_runs', 'wandb_running_runs', 'category'
+        ]
         print(json.dumps(progress[cols].to_dict(orient='records'), indent=2))
     elif args.format == 'csv':
-        cols = ['task', 'max_step', 'progress_pct', 'heartbeat_alive_runs', 'wandb_running_runs', 'category']
+        cols = [
+            'task', 'max_step', 'progress_pct',
+            'ckpt_step_max', 'video_step_max', 'needs_eval_video',
+            'heartbeat_alive_runs', 'wandb_running_runs', 'category'
+        ]
         print(progress[cols].to_csv(index=False))
     else:
         # Table format
         print("=" * 90)
         print(f"{'ALL TASKS':^90}")
         print("=" * 90)
-        print(f"{'Task':<45} {'Progress':>10} {'Max Step':>12} {'HB':>4} {'WB':>4} {'Status':>15}")
+        print(f"{'Task':<45} {'Progress':>10} {'Max Step':>12} {'Video':>10} {'Eval?':>6} {'HB':>4} {'WB':>4} {'Status':>15}")
         print("-" * 90)
         
         status_emoji = {'completed': '🟢', 'running': '🔵', 'stalled': '🟠', 'not_started': '🔴'}
         for _, row in progress.iterrows():
             step_str = f"{int(row['max_step']):,}" if row['max_step'] > 0 else "0"
+            video_str = f"{int(row.get('video_step_max', 0)):,}" if row.get('video_step_max', 0) > 0 else "0"
+            eval_mark = "Yes" if bool(row.get('needs_eval_video', False)) else ""
             emoji = status_emoji.get(row['category'], '')
             status_text = row['category'].replace('_', ' ')
             status_display = f"{emoji} {status_text}"
             hb = int(row.get('heartbeat_alive_runs', 0))
             wb = int(row.get('wandb_running_runs', 0))
-            print(f"   {row['task']:<42} {row['progress_pct']:>8.1f}% {step_str:>12} {hb:>4} {wb:>4} {status_display:>15}")
+            print(f"   {row['task']:<42} {row['progress_pct']:>8.1f}% {step_str:>12} {video_str:>10} {eval_mark:>6} {hb:>4} {wb:>4} {status_display:>15}")
         
         print("-" * 90)
         print(f"Total: {len(progress)} tasks")
@@ -238,11 +253,12 @@ def cmd_domains(args) -> int:
     
     # Use shared helper aligned to tasks.json (single source of truth: discover.liveness),
     # so domains include not-started tasks.
+    # Pass logs_dir for live filesystem scan (ensures consistency with eval list/videos collect)
     # With --all, also include unknown tasks seen in runs.
     if show_all:
-        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True)
+        progress = build_task_progress(df, target_step=target, task_list=None, include_unknown=True, logs_dir=args.logs_dir)
     else:
-        progress = build_task_progress(df, target_step=target)
+        progress = build_task_progress(df, target_step=target, logs_dir=args.logs_dir)
     
     def get_domain(task: str) -> str:
         for sep in ['-', '_']:
@@ -457,12 +473,13 @@ def cmd_eval(args) -> int:
     )
     
     print(f"\nTasks ≥{min_progress*100:.0f}% trained: {len(ready_df)}")
-    print(f"  With videos:    {len(tasks_with_videos)}")
-    print(f"  Need eval:      {len(tasks_need_eval)}")
+    # `tasks_ready_for_eval` now distinguishes ckpt vs video; treat "with videos" as "up-to-date".
+    print(f"  Video up-to-date: {len(tasks_with_videos)}")
+    print(f"  Need eval:        {len(tasks_need_eval)}")
     
     if args.action == 'list':
         if tasks_need_eval:
-            print("\nTasks needing eval (no videos):")
+            print("\nTasks needing eval (missing or stale videos):")
             for task in tasks_need_eval:
                 print(f"  • {task}")
     
@@ -548,7 +565,7 @@ def cmd_videos(args) -> int:
             output_dir=output_dir,
             target_step=target,
             min_progress=args.min_progress,
-            create_symlinks=not args.copy,
+            create_symlinks=args.symlink,
         )
     
     elif args.action == 'prune':
@@ -676,8 +693,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                           help='Output directory')
     p_videos.add_argument('--min-progress', type=float, default=0.5,
                           help='Minimum progress for video collection (default: 0.5)')
-    p_videos.add_argument('--copy', action='store_true',
-                          help='Copy files instead of creating symlinks')
+    p_videos.add_argument('--symlink', action='store_true',
+                          help='Create symlinks instead of copying files (default: copy)')
     p_videos.add_argument('--dry-run', action='store_true',
                           help='For prune: show what would be removed')
 
@@ -755,8 +772,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         'videos': cmd_videos,
         'cleanup-models': cmd_cleanup_models,
     }
-    
-    return handlers[args.command](args)
+
+    # Make CLI robust when output is piped (e.g. `... | head`).
+    # Without this, Python raises BrokenPipeError and prints a stack trace.
+    try:
+        return handlers[args.command](args)
+    except BrokenPipeError:
+        return 0
 
 
 if __name__ == '__main__':

@@ -1,9 +1,9 @@
 #!/bin/bash
 # Auto-generated eval script for tasks needing videos
-# Generated: 2025-12-27T04:24:10.481991
-# Tasks: 15
+# Generated: 2025-12-27T06:43:04.283466
+# Tasks: 2
 
-#BSUB -J newt-eval-videos-ms[1-15]
+#BSUB -J newt-eval-videos-ms[1-2]
 #BSUB -q short-gpu
 #BSUB -n 1
 #BSUB -gpu "num=1:mode=exclusive_process"
@@ -49,7 +49,7 @@ if not candidates:
 else:
     best = max(candidates, key=parse_step)
     run_id = best.parent.parent.name
-    print(f'CKPT="{best}"')
+    print(f'CKPT="{best.resolve()}"')
     print(f'RUN_ID="{run_id}"')
 PY
 )

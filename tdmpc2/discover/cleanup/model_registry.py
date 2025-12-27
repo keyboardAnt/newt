@@ -78,6 +78,14 @@ def plan_cleanup_latest_checkpoint_per_expert(
     Also prunes versions: for the kept max-step collection, keep only v0 and vN.
     """
     protect_aliases_set = {a.strip() for a in protect_aliases if str(a).strip()}
+    # IMPORTANT:
+    # W&B commonly assigns alias "latest" to the newest *version within each collection*.
+    # For this repo, each training step is logged as a separate *collection*, so even an
+    # old step-collection can have a "latest" alias (for its v0). If we treat "latest" as
+    # globally protected, old steps will never be deleted. We therefore ignore "latest"
+    # when deciding whether an artifact is protected from deletion.
+    protect_aliases_effective = set(protect_aliases_set)
+    protect_aliases_effective.discard("latest")
     name_re = re.compile(name_regex) if name_regex else None
 
     # best[expert_key] = best_step
@@ -157,13 +165,13 @@ def plan_cleanup_latest_checkpoint_per_expert(
             continue
 
         protected: Set[object] = set()
-        if protect_aliases_set:
+        if protect_aliases_effective:
             for art in versions:
                 try:
                     aliases = list(getattr(art, "aliases", []) or [])
                 except Exception:
                     aliases = []
-                if any(a in protect_aliases_set for a in aliases):
+                if any(a in protect_aliases_effective for a in aliases):
                     protected.add(art)
 
         if parsed.step != max_step:

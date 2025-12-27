@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, TYPE_CHECKING
@@ -29,6 +28,7 @@ from .wandb_connector import (
     fetch_runs_by_id as discover_wandb_runs_by_id,
     WANDB_STATE_TO_STATUS,
 )
+from .step_utils import find_run_videos, infer_video_step, iter_run_info_paths, parse_step_from_path
 
 # Defaults - edit these if your setup differs
 DEFAULT_LOGS_DIR = Path(__file__).parent.parent / "logs"
@@ -44,13 +44,6 @@ def require_pandas():
     return pd
 
 
-def parse_ckpt_step(path: Path) -> Optional[int]:
-    try:
-        return int(path.stem.replace("_", ""))
-    except ValueError:
-        return None
-
-
 def read_text_if_exists(path: Path) -> Optional[str]:
     if not path.is_file():
         return None
@@ -58,29 +51,6 @@ def read_text_if_exists(path: Path) -> Optional[str]:
         return path.read_text(encoding="utf-8").strip() or None
     except OSError:
         return None
-
-
-def iter_run_info_paths(logs_dir: Path) -> List[Path]:
-    """Return candidate run_info.yaml paths across supported on-disk layouts.
-
-    Supported layouts (depth from logs_dir):
-      - logs/<run_id>/run_info.yaml                       (legacy run-first)
-      - logs/<task>/<run_id>/run_info.yaml                (task-first)
-      - logs/<task>/<seed>/<run_id>/run_info.yaml         (older nested)
-
-    We intentionally avoid a full recursive rglob because logs/ can contain very
-    large wandb media trees; run_info.yaml is always near the top of each run dir.
-    """
-    patterns = (
-        "*/run_info.yaml",
-        "*/*/run_info.yaml",
-        "*/*/*/run_info.yaml",
-    )
-    paths: List[Path] = []
-    for pat in patterns:
-        paths.extend(logs_dir.glob(pat))
-    # Deduplicate and sort for stable scans.
-    return sorted(set(paths), key=lambda p: str(p))
 
 
 def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
@@ -110,13 +80,19 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
         except Exception:
             pass
 
-        ckpts = [p for p in (run_dir / "checkpoints").glob("*.pt") 
-                 if not p.stem.endswith('_trainer')]
-        best_ckpt = max(ckpts, key=parse_ckpt_step) if ckpts else None
+        ckpts = [p for p in (run_dir / "checkpoints").glob("*.pt") if not p.stem.endswith("_trainer")]
+        best_ckpt = max(ckpts, key=parse_step_from_path) if ckpts else None
 
-        videos = sorted(str(p.resolve()) for p in run_dir.glob("videos/*.mp4"))
-        if not videos:
-            videos = sorted(str(p.resolve()) for p in run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
+        # Use unified video discovery to avoid discrepancies with eval/videos commands.
+        video_paths = find_run_videos(run_dir)
+        videos = [str(p.resolve()) for p in video_paths]
+
+        # Derive a per-run video step using shared utility (consistent with eval.py).
+        has_video = bool(video_paths)
+        video_step: Optional[int] = None
+        if has_video:
+            vs = infer_video_step(run_dir, videos=video_paths)
+            video_step = vs if vs > 0 else None
         
         config_path = run_dir / "config.yaml"
         wandb_id_path = run_dir / "wandb_run_id.txt"
@@ -128,7 +104,7 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
             "status": run_info.get("status", "unknown"),
             # Use None (not 0) when no checkpoint exists so wandb summary['_step']
             # can still contribute to max_step/progress.
-            "ckpt_step": parse_ckpt_step(best_ckpt) if best_ckpt else None,
+            "ckpt_step": parse_step_from_path(best_ckpt) if best_ckpt else None,
             "steps": run_info.get("steps"),
             "updated_at": datetime.fromtimestamp(
                 best_ckpt.stat().st_mtime if best_ckpt else run_info_path.stat().st_mtime
@@ -137,6 +113,8 @@ def discover_local_logs(logs_dir: Path, limit: Optional[int]) -> "pd.DataFrame":
             "run_dir": str(run_dir.resolve()),
             "ckpt_path": str(best_ckpt.resolve()) if best_ckpt else None,
             "videos": videos,
+            "has_video": has_video,
+            "video_step": video_step,
         })
 
     sys.stderr.write(f"\r  {len(rows)} local runs found        \n")

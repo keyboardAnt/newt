@@ -12,6 +12,9 @@ Training logs checkpoints to W&B as artifacts of type `model`.
   keep only the **max-step** checkpoint collection and delete older-step collections.
 - **Only first+last versions per kept step**: For the kept collection, keep only `v0` and the
   latest version `vN` (plus any protected aliases), and delete intermediate versions.
+  - Note: W&B commonly assigns alias `latest` to the newest *version within a collection*. Since
+    this repo logs each step as its own collection, old step-collections can also have a `latest`
+    alias; the cleanup therefore **ignores `latest`** when deciding what to protect.
 
 ### Why `--artifact-name` exists (avoid “stuck” scans)
 

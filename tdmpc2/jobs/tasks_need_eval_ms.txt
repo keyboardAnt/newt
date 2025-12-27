@@ -1,15 +1,2 @@
-ms-pick-baseball
-ms-pick-cube-xarm6
-ms-pick-cup
-ms-pick-golf-ball
-ms-pick-knife
-ms-pick-rubiks-cube
-ms-pick-soccer-ball
-ms-pick-tennis-ball
-ms-push-apple
-ms-push-banana
-ms-push-can
-ms-push-pear
-ms-push-rubiks-cube
 ms-push-screwdriver
 ms-push-sponge

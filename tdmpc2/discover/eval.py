@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 if TYPE_CHECKING:
     import pandas as pd
 
-from .progress import best_step_by_task
-from .runs import iter_run_info_paths
+from .progress import best_step_by_task, parse_step
+from .step_utils import compute_task_steps, find_run_videos
 
 
 def require_pandas():
@@ -24,165 +24,98 @@ def require_pandas():
     return pd
 
 
-def find_run_videos(run_dir: Path) -> List[Path]:
-    """Find all video files in a run directory.
-    
-    Checks multiple locations where videos might be stored:
-    - wandb/run-*/files/media/videos/**/*.mp4 (wandb synced, new structure)
-    - **/wandb/run-*/files/media/videos/**/*.mp4 (wandb synced, old nested structure)
-    - videos/*.mp4 (direct saves)
-    """
-    videos = []
-    # Wandb media directory - new flat structure
-    videos.extend(run_dir.glob("wandb/run-*/files/media/videos/**/*.mp4"))
-    # Wandb media directory - old nested structure (check only one level deep to avoid slow recursive scan)
-    # videos.extend(run_dir.glob("**/wandb/run-*/files/media/videos/**/*.mp4"))
-    videos.extend(run_dir.glob("*/wandb/run-*/files/media/videos/**/*.mp4"))
-    # Direct video saves
-    video_dir = run_dir / "videos"
-    if video_dir.is_dir():
-        videos.extend(video_dir.glob("*.mp4"))
-    return sorted(set(videos))  # Use set to deduplicate
-
-
-def find_task_videos(task: str, logs_dir: Path) -> List[str]:
-    """Find videos for a task by checking run_info.yaml in each run directory.
-    
-    Since video filenames don't contain the task name, we use run_info.yaml
-    to identify which runs belong to the task, then collect their videos.
-    """
-    import yaml
-    
-    if not logs_dir.is_dir():
-        return []
-    
-    videos = []
-    for run_info_path in iter_run_info_paths(logs_dir):
-        run_dir = run_info_path.parent
-        try:
-            info = yaml.safe_load(run_info_path.read_text()) or {}
-            run_tasks = info.get("tasks", [info.get("task")])
-            if task not in run_tasks:
-                continue
-        except Exception:
-            continue
-        
-        # Found a run for this task - collect its videos
-        run_videos = find_run_videos(run_dir)
-        videos.extend(str(v) for v in run_videos)
-    
-    return sorted(set(videos))
-
-
 def tasks_ready_for_eval(
     df: "pd.DataFrame",
     logs_dir: Path,
     target_step: int = 5_000_000,
     min_progress: float = 0.5
 ) -> Tuple["pd.DataFrame", List[str], List[str]]:
-    """Find tasks that are at least min_progress trained and check video availability.
-    
+    """Summarize checkpoint vs video availability for tasks and recommend eval-only jobs.
+
+    This is intended to match `discover videos collect` semantics:
+    - `ckpt_step`: max checkpoint step found on disk for the task
+    - `video_step`: best available video step for the task
+      (eval-only runs may have videos but no checkpoints; step is derived from run_info/video name)
+    - `needs_eval`: there exists a newer checkpoint than the best available video, or no video at all
+
     Returns:
-        Tuple of (ready_df, tasks_need_eval, tasks_with_videos)
+        Tuple of (ready_df, tasks_need_eval, tasks_up_to_date)
     """
     pd = require_pandas()
     min_step = int(target_step * min_progress)
-    
+
     best = best_step_by_task(df)
     if best.empty:
-        print('No runs found.')
+        print("No runs found.")
         return pd.DataFrame(), [], []
-    
-    ready = best[best['max_step'] >= min_step].copy()
-    
-    # OPTIMIZATION: Use cached video paths if available, or fall back to run_dir lookup
-    print(f"Checking for videos in {len(ready)} ready tasks...")
-    
-    # Pre-compute run directory map for fallback
-    ready_tasks = set(ready['task'])
-    relevant_runs = df[df['task'].isin(ready_tasks) & df['run_dir'].notna()]
-    task_to_run_dirs = relevant_runs.groupby('task')['run_dir'].apply(list).to_dict()
-    
-    # Pre-compute cached videos map to avoid O(N*M) dataframe filtering in loop
-    task_to_video_lists = {}
-    if 'videos' in df.columns:
-        relevant_videos = df[df['task'].isin(ready_tasks) & df['videos'].notna()]
-        task_to_video_lists = relevant_videos.groupby('task')['videos'].apply(list).to_dict()
-    else:
-        print("⚠️  Cache is outdated (missing video info). Run 'make refresh' for fast execution.")
-    
-    def get_videos_fast(task: str) -> List[str]:
-        videos = []
-        
-        # 1. Try using cached videos from the dataframe
-        if task in task_to_video_lists:
-            for v_list in task_to_video_lists[task]:
-                if isinstance(v_list, list):
-                    videos.extend(v_list)
-        
-        # 2. If no videos found in cache (or cache too old), check directories
-        if not videos:
-            run_dirs = task_to_run_dirs.get(task, [])
-            for d in run_dirs:
-                try:
-                    videos.extend(str(v) for v in find_run_videos(Path(d)))
-                except Exception:
-                    continue
 
-        # 3. Final fallback: scan logs/<task>/... directly.
-        # This catches newly created eval runs even if the discovery cache wasn't refreshed.
-        if not videos:
-            task_dir = logs_dir / task
-            if task_dir.is_dir():
-                try:
-                    for run_dir in task_dir.iterdir():
-                        if not run_dir.is_dir():
-                            continue
-                        videos.extend(str(v) for v in find_run_videos(run_dir))
-                except Exception as e:
-                    # Don't fail discovery, but surface the issue so users know why a task
-                    # might still show up as "no videos".
-                    sys.stderr.write(
-                        f"⚠️  Failed to scan videos for task '{task}' under {task_dir}: {repr(e)}\n"
-                    )
-        return sorted(set(videos))
-        
-    ready['video_paths'] = ready['task'].apply(get_videos_fast)
-    ready['has_videos'] = ready['video_paths'].apply(lambda x: len(x) > 0)
-    ready['progress_pct'] = (100 * ready['max_step'] / target_step).round(1)
-    ready = ready.sort_values('max_step', ascending=False)
-    
-    with_videos = ready[ready['has_videos']]
-    without_videos = ready[~ready['has_videos']]
-    
-    print("=" * 80)
-    print(f"{'TASKS READY FOR EVALUATION (≥' + str(int(min_progress*100)) + '% trained)':^80}")
-    print("=" * 80)
-    print(f"\nTotal tasks at ≥{int(min_progress*100)}%: {len(ready)}")
-    print(f"  ✅ With videos:    {len(with_videos)}")
-    print(f"  ❌ Without videos: {len(without_videos)}")
-    
-    print(f"\n{'─' * 80}")
-    print("Tasks WITH videos:")
-    print("─" * 80)
-    if not with_videos.empty:
-        for _, row in with_videos.iterrows():
-            print(f"  ✅ {row['task']:<45} {int(row['max_step']):>10,} ({row['progress_pct']}%)")
-    else:
-        print("  (none)")
-    
-    print(f"\n{'─' * 80}")
-    print("Tasks WITHOUT videos (need eval):")
-    print("─" * 80)
-    if not without_videos.empty:
-        for _, row in without_videos.iterrows():
-            print(f"  ❌ {row['task']:<45} {int(row['max_step']):>10,} ({row['progress_pct']}%)")
-    else:
-        print("  (none - all tasks have videos!)")
-    
-    print("=" * 80)
-    
-    return ready, without_videos['task'].tolist(), with_videos['task'].tolist()
+    all_tasks = best["task"].dropna().astype(str).unique().tolist()
+    print(f"Checking for videos in {len(all_tasks)} tasks...")
+
+    rows: List[dict] = []
+    step_info = compute_task_steps(logs_dir, sorted(all_tasks))
+    for task in sorted(all_tasks):
+        ckpt_step, video_step, has_video, _ = step_info.get(task, (0, 0, False, None))
+
+        # Filter by min_progress based on filesystem checkpoint step (aligns with videos collect)
+        if ckpt_step < min_step:
+            continue
+
+        progress_pct = round(100 * ckpt_step / target_step, 1) if target_step else 0.0
+        is_up_to_date = bool(has_video) and (int(video_step) > 0) and (int(video_step) >= int(ckpt_step)) and (int(ckpt_step) > 0)
+        needs_eval = (int(ckpt_step) > 0) and ((not bool(has_video)) or (int(video_step) == 0) or (int(video_step) < int(ckpt_step)))
+
+        rows.append({
+            "task": task,
+            "ckpt_step": ckpt_step,
+            "video_step": video_step,
+            "progress_pct": progress_pct,
+            "has_video": has_video,
+            "is_up_to_date": is_up_to_date,
+            "needs_eval": needs_eval,
+        })
+
+    ready_df = pd.DataFrame(rows).sort_values(["progress_pct", "task"], ascending=[False, True])
+
+    # Lists used by `discover eval submit`
+    tasks_need_eval = ready_df.loc[ready_df["needs_eval"], "task"].tolist()
+    tasks_up_to_date = ready_df.loc[ready_df["is_up_to_date"], "task"].tolist()
+
+    n_total = len(ready_df)
+    n_has_video = int(ready_df["has_video"].sum()) if not ready_df.empty else 0
+    n_up_to_date = int(ready_df["is_up_to_date"].sum()) if not ready_df.empty else 0
+    n_need_eval = int(ready_df["needs_eval"].sum()) if not ready_df.empty else 0
+    n_no_video = n_total - n_has_video
+    n_stale = n_need_eval - n_no_video
+
+    print("=" * 92)
+    print(f"{'TASKS READY FOR EVALUATION (checkpoint vs video)':^92}")
+    print("=" * 92)
+    print(f"\nTotal tasks at ≥{int(min_progress*100)}%: {n_total}")
+    print(f"  ✅ Video up-to-date: {n_up_to_date}")
+    print(f"  ⚠️  Video stale:     {n_stale}")
+    print(f"  ❌ No video:         {n_no_video}")
+    print(f"  🧪 Needs eval:       {n_need_eval}")
+
+    print(f"\n{'─' * 120}")
+    print(f"{'Task':<45} {'Ckpt':>12} {'Video':>12} {'Progress':>10} {'Needs Eval':>10}")
+    print("─" * 120)
+    for _, r in ready_df.iterrows():
+        needs = "Yes" if bool(r["needs_eval"]) else ""
+        ckpt_disp = f"{int(r['ckpt_step']):,}" if int(r["ckpt_step"]) > 0 else "0"
+        vid_disp = f"{int(r['video_step']):,}" if int(r["video_step"]) > 0 else "0"
+        print(f"  {r['task']:<43} {ckpt_disp:>12} {vid_disp:>12} {r['progress_pct']:>9.1f}% {needs:>10}")
+    print("─" * 120)
+    print("=" * 92)
+
+    if tasks_need_eval:
+        print("\nRecommended eval-only jobs (latest checkpoint missing an updated video):")
+        for task in tasks_need_eval:
+            row = ready_df[ready_df["task"] == task].iloc[0]
+            print(f"  • {task:<45} ckpt={int(row['ckpt_step']):,} video={int(row['video_step']):,}")
+        print(f"\nTo generate an LSF script for these tasks:\n  python -m discover eval submit --min-progress {min_progress}\n")
+
+    return ready_df, tasks_need_eval, tasks_up_to_date
 
 
 def generate_eval_script(
@@ -275,7 +208,7 @@ if not candidates:
 else:
     best = max(candidates, key=parse_step)
     run_id = best.parent.parent.name
-    print(f'CKPT="{{best}}"')
+    print(f'CKPT="{{best.resolve()}}"')
     print(f'RUN_ID="{{run_id}}"')
 PY
 )
@@ -407,7 +340,7 @@ def collect_videos(
     output_dir: Path,
     target_step: int = 5_000_000,
     min_progress: float = 0.5,
-    create_symlinks: bool = True,
+    create_symlinks: bool = False,
     prune_old: bool = True,
 ) -> Optional["pd.DataFrame"]:
     """Collect videos from tasks that are min_progress% trained into a single directory.
@@ -425,55 +358,40 @@ def collect_videos(
     
     min_step = int(target_step * min_progress)
     best = best_step_by_task(df)
-    ready = best[best['max_step'] >= min_step].copy()
+    # We'll compute max checkpoint step + best available video purely from the filesystem
+    # (under logs/), so this is correct even if the discovery cache is stale.
+    # Still use `best` as a convenient list of tasks to consider.
+    all_tasks = best['task'].tolist()
     
-    # OPTIMIZATION: Use cached video paths if available, or fall back to run_dir lookup
-    print(f"Checking for videos in {len(ready)} ready tasks...")
-    
-    # Pre-compute run directory map for fallback
-    ready_tasks = set(ready['task'])
-    relevant_runs = df[df['task'].isin(ready_tasks) & df['run_dir'].notna()]
-    task_to_run_dirs = relevant_runs.groupby('task')['run_dir'].apply(list).to_dict()
-    
-    # Pre-compute cached videos map to avoid O(N*M) dataframe filtering in loop
-    task_to_video_lists = {}
-    if 'videos' in df.columns:
-        relevant_videos = df[df['task'].isin(ready_tasks) & df['videos'].notna()]
-        task_to_video_lists = relevant_videos.groupby('task')['videos'].apply(list).to_dict()
+    print(f"Checking for videos in {len(all_tasks)} tasks...")
     
     video_info = []
-    for _, row in ready.iterrows():
-        task = row['task']
-        videos = []
-        
-        # 1. Try using cached videos from the dataframe
-        if task in task_to_video_lists:
-            for v_list in task_to_video_lists[task]:
-                if isinstance(v_list, list):
-                    videos.extend(v_list)
-        
-        # 2. If no videos found in cache (or cache too old), check directories
-        if not videos:
-            for d in task_to_run_dirs.get(task, []):
-                try:
-                    # Only scan if we didn't get them from cache (avoid double counting if cache was partial)
-                    found = [str(v) for v in find_run_videos(Path(d))]
-                    videos.extend(found)
-                except Exception:
-                    continue
-        
-        videos = sorted(set(videos))
-        
-        if videos:
-            video_info.append({
-                'task': task,
-                'max_step': row['max_step'],
-                'progress_pct': 100 * row['max_step'] / target_step,
-                'video_path': videos[-1],  # Use latest video
-            })
+    step_info = compute_task_steps(logs_dir, [str(t) for t in all_tasks])
+
+    for task in all_tasks:
+        ckpt_step, video_step, found_any_video, best_video_path = step_info.get(str(task), (0, 0, False, None))
+        video_path: Optional[str] = str(best_video_path) if best_video_path is not None else None
+
+        if ckpt_step < min_step:
+            continue
+
+        missing_latest_video = bool(found_any_video) and (int(ckpt_step) > 0) and ((int(video_step) == 0) or (int(video_step) < int(ckpt_step)))
+        no_videos = (not bool(found_any_video))
+
+        # Include the task even if it has no videos, so the summary can surface it.
+        # Collection behavior below will prune stale outputs if no videos exist.
+        video_info.append({
+            'task': task,
+            'ckpt_step': ckpt_step,
+            'video_step': video_step,
+            'missing_latest_video': missing_latest_video,
+            'no_videos': no_videos,
+            'progress_pct': 100 * ckpt_step / target_step,
+            'video_path': video_path,
+        })
     
     if not video_info:
-        print("❌ No videos found in tasks that are 50%+ trained.")
+        print("❌ No videos found for tasks meeting the progress threshold.")
         print("   Run the eval script first to generate videos.")
         return None
     
@@ -485,59 +403,103 @@ def collect_videos(
     total_updated = 0
     total_pruned = 0
     
+    # Summary counters (about videos vs latest checkpoints)
+    n_ready = len(video_info)
+    n_with_videos = sum(1 for v in video_info if int(v['video_step']) > 0)
+    n_need_eval_latest = sum(1 for v in video_info if bool(v.get('missing_latest_video')))
+    n_no_videos = sum(1 for v in video_info if bool(v.get('no_videos')))
+
     for v in sorted(video_info, key=lambda x: x['task']):
-        src = Path(v['video_path'])
-        if not src.exists():
-            print(f"⚠️  Video not found: {src}")
-            continue
-        
         task = v['task']
-        step = int(v['max_step'])
-        dst_name = f"{task}_{step}.mp4"
-        dst = output_dir / dst_name
+        ckpt_step = int(v['ckpt_step'])
+        video_step = int(v['video_step'])
+        video_path_str = v.get('video_path')
         
-        # Check existing status before any changes
+        # Output should contain the best available video (highest checkpoint step that has a video).
+        # IMPORTANT: never delete existing presentation videos for a task unless we can
+        # keep or create a valid best-available one (avoid accidental data loss).
         existing_files = list(output_dir.glob(f'{task}_*.mp4'))
-        existing_steps = []
-        for p in existing_files:
-            m = re.match(rf'^{re.escape(task)}_(\d+)\.mp4$', p.name)
-            if m:
-                existing_steps.append(int(m.group(1)))
-        
-        is_new = len(existing_steps) == 0
-        is_updated = False
-        if not is_new:
-             max_existing = max(existing_steps)
-             if step > max_existing:
-                 is_updated = True
-        
-        # Prune older videos for this task
-        pruned_files = []
-        if prune_old:
-            pruned_files = _prune_task_videos(output_dir, task, step)
-        
-        if create_symlinks:
-            if dst.exists() or dst.is_symlink():
-                dst.unlink()
-            dst.symlink_to(src.resolve())
-        else:
-            shutil.copy2(src, dst)
-        
-        n_pruned = len(pruned_files)
-        
+        had_any = len(existing_files) > 0
+
+        dst_name: Optional[str] = None
+        dst: Optional[Path] = None
+        if video_step > 0:
+            dst_name = f"{task}_{video_step}.mp4"
+            dst = output_dir / dst_name
+
+        # Determine whether we can safely converge this task to the target file.
+        # - If we have a target name and it already exists in output_dir, it's safe to prune others.
+        # - If we have a target name and a valid source video to link/copy, it's safe to prune others.
+        # - Otherwise, do NOT prune anything for this task (keep current state).
+        src_path: Optional[Path] = None
+        if video_step > 0 and video_path_str:
+            candidate = Path(video_path_str)
+            if candidate.exists():
+                src_path = candidate
+
+        target_exists = False
+        if dst_name is not None:
+            for p in existing_files:
+                if p.name == dst_name:
+                    # p may be a symlink; Path.exists() checks the target.
+                    # We treat an existing entry as acceptable even if it's a symlink,
+                    # but we avoid keeping broken ones by requiring exists().
+                    if p.exists():
+                        target_exists = True
+                    break
+
+        can_converge = (dst_name is not None) and (target_exists or (src_path is not None))
+
+        # Prune everything except the target filename (only when safe)
+        n_pruned = 0
+        if prune_old and can_converge:
+            for p in existing_files:
+                if p.name != dst_name:
+                    p.unlink(missing_ok=True)
+                    n_pruned += 1
+
+        # New/updated status for reporting
+        had_exact = (dst_name is not None) and any(p.name == dst_name for p in existing_files)
+        is_new = (not had_any) and (video_step > 0) and (src_path is not None)
+        is_updated = had_any and (video_step > 0) and (not had_exact) and (src_path is not None)
+
+        # Create/update the target video link/copy if we have one
+        if video_step > 0 and dst is not None and src_path is not None:
+            if create_symlinks:
+                if dst.exists() or dst.is_symlink():
+                    dst.unlink()
+                dst.symlink_to(src_path.resolve())
+                method = "symlinked"
+            else:
+                # If a previous run created a symlink (or hardlink) at dst pointing to src_path,
+                # shutil.copy2 will raise SameFileError. Make copy mode idempotent by replacing
+                # any existing dst and treating "same file" as a no-op.
+                try:
+                    if dst.exists() or dst.is_symlink():
+                        # If it's already the same underlying file, just replace it with a real copy
+                        # (or keep it if it's already a regular file copy).
+                        dst.unlink(missing_ok=True)
+                    shutil.copy2(src_path, dst)
+                except shutil.SameFileError:
+                    # Already the same file; nothing to do.
+                    pass
+                method = "copied"
+
         if is_new:
             total_new += 1
         if is_updated:
             total_updated += 1
         total_pruned += n_pruned
-        
+
         collected.append({
             'task': task,
-            'step': step,
+            'ckpt_step': ckpt_step,
+            'video_step': video_step,
+            'missing_latest_video': bool(v.get('missing_latest_video')),
             'progress': v['progress_pct'],
-            'filename': dst_name,
-            'source_path': str(src),
-            'dest_path': str(dst),
+            'filename': dst_name or "",
+            'source_path': str(src_path) if src_path is not None else "",
+            'dest_path': str(dst) if dst is not None else "",
             'is_new': is_new,
             'is_updated': is_updated,
             'pruned_count': n_pruned
@@ -553,16 +515,24 @@ def collect_videos(
     print(f"   ✨ New videos: {total_new}")
     print(f"   🔄 Updated videos: {total_updated}")
     print(f"   🗑️  Pruned old videos: {total_pruned}")
+    print(f"   ⚠️  Newer checkpoint exists w/o video (needs eval): {n_need_eval_latest}")
+    print(f"   ❌ No videos at all (needs eval): {n_no_videos}")
     
     print(f"\n{'─' * 115}")
-    print(f"{'Task':<45} {'Step':>12} {'Progress':>10}   {'New Video':^12} {'Updated':^12} {'Pruned Old':^12}")
+    print(f"{'Task':<45} {'Ckpt':>12} {'Video':>12} {'Progress':>10} {'Needs Eval':^11} {'New':^6} {'Upd':^6} {'Pruned':>8}")
     print("─" * 115)
     for v in collected:
-        new_mark = "✅ Yes" if v['is_new'] else ""
-        upd_mark = "🔄 Yes" if v['is_updated'] else ""
-        pruned_mark = f"{v['pruned_count']} files" if v['pruned_count'] > 0 else ""
-        
-        print(f"  {v['task']:<43} {v['step']:>12,} {v['progress']:>9.1f}%   {new_mark:^12} {upd_mark:^12} {pruned_mark:^12}")
+        needs_eval = "Yes" if v.get('missing_latest_video') or (int(v.get('video_step') or 0) == 0) else ""
+        new_mark = "Yes" if v['is_new'] else ""
+        upd_mark = "Yes" if v['is_updated'] else ""
+        pruned_mark = f"{v['pruned_count']}" if v['pruned_count'] > 0 else ""
+
+        ckpt_disp = f"{int(v.get('ckpt_step') or 0):,}" if int(v.get('ckpt_step') or 0) > 0 else "0"
+        vid_disp = f"{int(v.get('video_step') or 0):,}" if int(v.get('video_step') or 0) > 0 else "0"
+        print(
+            f"  {v['task']:<43} {ckpt_disp:>12} {vid_disp:>12} {v['progress']:>9.1f}% "
+            f"{needs_eval:^11} {new_mark:^6} {upd_mark:^6} {pruned_mark:>8}"
+        )
     print("─" * 115)
     
     # Save manifest
