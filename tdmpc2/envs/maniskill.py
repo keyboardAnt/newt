@@ -426,7 +426,11 @@ def make_env(cfg):
 		msg = str(e)
 		if (
 			render_mode
-			and "Failed to find a supported physical device" in msg
+			and (
+				"Failed to find a supported physical device" in msg
+				or "vk::PhysicalDevice::createDeviceUnique" in msg
+				or "ErrorInitializationFailed" in msg
+			)
 			and make_kwargs.get("render_backend") != "sapien_cpu"
 		):
 			print(

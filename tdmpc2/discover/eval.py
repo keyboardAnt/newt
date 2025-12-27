@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
@@ -191,11 +192,13 @@ def generate_eval_script(
 ) -> Optional[List[Tuple[Path, Path]]]:
     """Generate task list(s) + LSF script(s) to run eval on tasks without videos.
 
-    NOTE: LSF resource requirements (e.g. GPU mode) are fixed per submitted job. Since
-    ManiSkill tasks (ms-*) require *non-exclusive* GPU mode for SAPIEN/Vulkan, we split
-    the submission into two job arrays:
-      - non-ManiSkill tasks: exclusive GPU mode (num=1:mode=exclusive_process)
-      - ManiSkill tasks (ms-*): shared GPU mode (num=1)
+    NOTE: LSF resource requirements (e.g. GPU mode) are fixed per submitted job, so we
+    may split the submission into multiple job arrays.
+    
+    Historically, ManiSkill (SAPIEN/Vulkan) was run in shared GPU mode, but in practice
+    shared mode can lead to transient CUDA OOM at init when the node is busy. We now
+    request exclusive GPU mode for both arrays for stability; ManiSkill video rendering
+    itself is handled robustly in-code (CPU fallback) when Vulkan init fails.
     """
     output_dir = Path(output_dir)
     
@@ -316,11 +319,11 @@ python train.py \\
     if out:
         created.append(out)
 
-    # ManiSkill jobs: MUST use shared GPU mode.
+    # ManiSkill jobs: use exclusive GPU mode for stability (avoid CUDA init OOM on shared nodes).
     out = _write_one(
         task_subset=ms_tasks,
         suffix="_ms",
-        gpu_spec="num=1",
+        gpu_spec="num=1:mode=exclusive_process",
         job_name="newt-eval-videos-ms",
     )
     if out:
@@ -478,7 +481,10 @@ def collect_videos(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     collected = []
-    pruned_total = []
+    total_new = 0
+    total_updated = 0
+    total_pruned = 0
+    
     for v in sorted(video_info, key=lambda x: x['task']):
         src = Path(v['video_path'])
         if not src.exists():
@@ -490,10 +496,25 @@ def collect_videos(
         dst_name = f"{task}_{step}.mp4"
         dst = output_dir / dst_name
         
-        # Prune older videos for this task before creating the new one
+        # Check existing status before any changes
+        existing_files = list(output_dir.glob(f'{task}_*.mp4'))
+        existing_steps = []
+        for p in existing_files:
+            m = re.match(rf'^{re.escape(task)}_(\d+)\.mp4$', p.name)
+            if m:
+                existing_steps.append(int(m.group(1)))
+        
+        is_new = len(existing_steps) == 0
+        is_updated = False
+        if not is_new:
+             max_existing = max(existing_steps)
+             if step > max_existing:
+                 is_updated = True
+        
+        # Prune older videos for this task
+        pruned_files = []
         if prune_old:
-            pruned = _prune_task_videos(output_dir, task, step)
-            pruned_total.extend(pruned)
+            pruned_files = _prune_task_videos(output_dir, task, step)
         
         if create_symlinks:
             if dst.exists() or dst.is_symlink():
@@ -502,13 +523,24 @@ def collect_videos(
         else:
             shutil.copy2(src, dst)
         
+        n_pruned = len(pruned_files)
+        
+        if is_new:
+            total_new += 1
+        if is_updated:
+            total_updated += 1
+        total_pruned += n_pruned
+        
         collected.append({
             'task': task,
             'step': step,
             'progress': v['progress_pct'],
             'filename': dst_name,
             'source_path': str(src),
-            'dest_path': str(dst)
+            'dest_path': str(dst),
+            'is_new': is_new,
+            'is_updated': is_updated,
+            'pruned_count': n_pruned
         })
     
     print("=" * 80)
@@ -517,15 +549,21 @@ def collect_videos(
     print(f"\n📁 Output directory: {output_dir}")
     print(f"   Total videos: {len(collected)}")
     print(f"   Method: {'symlinks' if create_symlinks else 'copies'}")
-    if pruned_total:
-        print(f"   🗑️  Pruned old videos: {len(pruned_total)}")
     
-    print(f"\n{'─' * 80}")
-    print(f"{'Task':<45} {'Step':>12} {'Progress':>10}")
-    print("─" * 80)
+    print(f"   ✨ New videos: {total_new}")
+    print(f"   🔄 Updated videos: {total_updated}")
+    print(f"   🗑️  Pruned old videos: {total_pruned}")
+    
+    print(f"\n{'─' * 115}")
+    print(f"{'Task':<45} {'Step':>12} {'Progress':>10}   {'New Video':^12} {'Updated':^12} {'Pruned Old':^12}")
+    print("─" * 115)
     for v in collected:
-        print(f"  {v['task']:<43} {v['step']:>12,} {v['progress']:>9.1f}%")
-    print("─" * 80)
+        new_mark = "✅ Yes" if v['is_new'] else ""
+        upd_mark = "🔄 Yes" if v['is_updated'] else ""
+        pruned_mark = f"{v['pruned_count']} files" if v['pruned_count'] > 0 else ""
+        
+        print(f"  {v['task']:<43} {v['step']:>12,} {v['progress']:>9.1f}%   {new_mark:^12} {upd_mark:^12} {pruned_mark:^12}")
+    print("─" * 115)
     
     # Save manifest
     manifest_df = pd.DataFrame(collected)
