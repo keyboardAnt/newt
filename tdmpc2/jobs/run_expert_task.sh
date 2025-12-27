@@ -18,7 +18,9 @@ _term() {
   if [[ -n "${CURRENT_PID}" ]]; then
     echo "Forwarding signal to child PID ${CURRENT_PID}..."
     kill -TERM "${CURRENT_PID}" 2>/dev/null
-    wait "${CURRENT_PID}"
+    # With `set -e`, a non-zero `wait` would terminate the script immediately.
+    # Best-effort wait here; the main loop handles exit codes.
+    wait "${CURRENT_PID}" || true
   fi
   exit 143
 }
@@ -230,8 +232,9 @@ while (( ATTEMPT <= MAX_ATTEMPTS )); do
   # Run in background to allow signal trapping
   python train.py "${ARGS_ATTEMPT[@]}" &
   CURRENT_PID=$!
-  wait "${CURRENT_PID}"
-  EXIT_CODE=$?
+  # IMPORTANT: with `set -e`, a failing `wait` would exit the script, skipping retries.
+  EXIT_CODE=0
+  wait "${CURRENT_PID}" || EXIT_CODE=$?
   CURRENT_PID=""
 
   if (( EXIT_CODE == 0 )); then
