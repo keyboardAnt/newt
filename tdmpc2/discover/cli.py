@@ -308,8 +308,9 @@ def cmd_domains(args) -> int:
 
 def cmd_restart(args) -> int:
     """Show/submit jobs for stalled tasks."""
-    pd = require_pandas()
+    require_pandas()
     from .api import load_df
+    from .liveness import build_task_progress
     from .plots import tasks_needing_restart
     
     df = load_df(
@@ -319,9 +320,27 @@ def cmd_restart(args) -> int:
         wandb_project=args.wandb_project,
     )
     
-    # Get tasks needing restart (uses tasks.json alignment, includes not-started tasks)
-    # No need to filter df - tasks_needing_restart uses build_task_progress which is tasks.json-aligned
-    needing = tasks_needing_restart(df, target_step=args.target_step)
+    # "Bulk submit" convenience flag implies both:
+    # - ignore active-signal checks (heartbeat/W&B)
+    # - actually submit
+    all_incomplete = bool(getattr(args, "all_incomplete", False) or getattr(args, "submit_all_incomplete", False))
+    submit = bool(getattr(args, "submit", False) or getattr(args, "submit_all_incomplete", False))
+
+    if all_incomplete:
+        # Explicit "bulk submit" mode: ignore liveness signals and restart everything unfinished.
+        # This is intentionally NOT idempotent w.r.t. running jobs.
+        progress = build_task_progress(df, target_step=args.target_step, logs_dir=args.logs_dir)
+        needing = progress[progress['max_step'] < args.target_step].copy()
+        needing = needing.sort_values('progress_pct', ascending=False)
+        if not needing.empty:
+            print(
+                f"\n⚠️  ALL INCOMPLETE TASKS ({len(needing)} tasks; ignores active signals):\n"
+                "   Warning: this can re-submit tasks that are already running.\n"
+            )
+    else:
+        # Get tasks needing restart (uses tasks.json alignment, includes not-started tasks)
+        # No need to filter df - tasks_needing_restart uses build_task_progress which is tasks.json-aligned
+        needing = tasks_needing_restart(df, target_step=args.target_step)
     
     if needing.empty:
         return 0
@@ -419,7 +438,7 @@ def cmd_restart(args) -> int:
     
     print("\n" + "=" * 80)
     
-    if args.submit:
+    if submit:
         # Ensure the LSF stdout/stderr directory exists before submitting.
         # Without this, jobs may run without any accessible output files, making
         # fast failures (e.g., container startup issues) very hard to debug.
@@ -675,6 +694,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_restart = subparsers.add_parser('restart', help='Show/submit jobs for stalled tasks')
     p_restart.add_argument('--submit', action='store_true',
                            help='Actually submit bsub commands (default: dry-run)')
+    p_restart.add_argument(
+        '--all-incomplete',
+        action='store_true',
+        help='Restart all incomplete tasks (ignores heartbeat/W&B active-signal checks)',
+    )
+    p_restart.add_argument(
+        '--submit-all-incomplete',
+        dest='submit_all_incomplete',
+        action='store_true',
+        help='Submit restart jobs for all incomplete tasks (ignores heartbeat/W&B active-signal checks)',
+    )
     
     # eval
     p_eval = subparsers.add_parser('eval', help='List tasks needing eval or submit eval jobs')

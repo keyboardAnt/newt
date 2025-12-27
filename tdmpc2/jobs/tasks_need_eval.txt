@@ -1,2 +1,9 @@
-atari-double-dunk
-og-ant-spiral
+atari-battle-zone
+og-antball
+og-point-spiral
+og-point-var1
+pygame-cartpole-balance-sparse
+pygame-cartpole-tremor
+pygame-coinrun
+pygame-cowboy
+pygame-pong

@@ -1,1 +1,4 @@
-ms-push-sponge
+ms-pick-baseball
+ms-pick-screwdriver
+ms-pick-soccer-ball
+ms-push-screwdriver
