@@ -400,6 +400,20 @@ class Trainer():
                 print('Pretraining complete.')
             self.logger.save_agent(self.agent, f'{self._step:,}'.replace(',', '_'))
 
+        # ---------------------------------------------------------------------
+        # Eval-only mode: run evaluation once (with optional video) and exit.
+        # This is used by cluster "generate missing videos" jobs.
+        # ---------------------------------------------------------------------
+        if self.cfg.get("eval_only", False):
+            if self.cfg.rank == 0:
+                print(colored("Eval-only mode: running evaluation once and exiting.", "green", attrs=["bold"]))
+            eval_metrics = self.eval()
+            eval_metrics.update(self.common_metrics())
+            if self.cfg.task == "soup":
+                self.logger.pprint_multitask(eval_metrics, self.cfg)
+            self.logger.log(eval_metrics, "eval")
+            return
+
         # Training loop
         if self.cfg.rank == 0:
             print(f'Training agent for {self.cfg.steps:,} steps...')

@@ -127,6 +127,23 @@ def tasks_ready_for_eval(
                     videos.extend(str(v) for v in find_run_videos(Path(d)))
                 except Exception:
                     continue
+
+        # 3. Final fallback: scan logs/<task>/... directly.
+        # This catches newly created eval runs even if the discovery cache wasn't refreshed.
+        if not videos:
+            task_dir = logs_dir / task
+            if task_dir.is_dir():
+                try:
+                    for run_dir in task_dir.iterdir():
+                        if not run_dir.is_dir():
+                            continue
+                        videos.extend(str(v) for v in find_run_videos(run_dir))
+                except Exception as e:
+                    # Don't fail discovery, but surface the issue so users know why a task
+                    # might still show up as "no videos".
+                    sys.stderr.write(
+                        f"⚠️  Failed to scan videos for task '{task}' under {task_dir}: {repr(e)}\n"
+                    )
         return sorted(set(videos))
         
     ready['video_paths'] = ready['task'].apply(get_videos_fast)
@@ -272,6 +289,7 @@ python train.py \\
   model_size=B \\
   checkpoint="${{CKPT}}" \\
   steps=1 \\
+  eval_only=True \\
   num_envs=2 \\
   use_demos=False \\
   tasks_fp={project_root.parent}/tasks.json \\

@@ -66,6 +66,7 @@ def main() -> None:
             "model_size=B",
             f"checkpoint={str(best_ckpt)}",
             "steps=1",
+            "eval_only=True",
             "num_envs=2",
             "use_demos=False",
             f"tasks_fp={str(tasks_fp)}",

@@ -31,6 +31,9 @@ class Config:
 	checkpoint: Optional[str] = None
 	eval_episodes: int = 2
 	eval_freq: Optional[int] = None
+	# If True, run evaluation once (optionally with video) and exit. Useful for
+	# "evaluate a checkpoint and generate videos" jobs on the cluster.
+	eval_only: bool = False
 
 	# training
 	steps: int = 100_000_000

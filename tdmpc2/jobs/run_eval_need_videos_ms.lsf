@@ -66,6 +66,7 @@ python train.py \
   model_size=B \
   checkpoint="${CKPT}" \
   steps=1 \
+  eval_only=True \
   num_envs=2 \
   use_demos=False \
   tasks_fp=/home/projects/dharel/nadavt/repos/newt/tasks.json \
