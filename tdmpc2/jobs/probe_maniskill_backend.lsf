@@ -1,0 +1,47 @@
+#!/bin/bash
+# Probe ManiSkill backend parsing + SAPIEN device mapping code inside container.
+
+#BSUB -J newt-ms-backend-probe
+#BSUB -q short-gpu
+#BSUB -n 1
+#BSUB -gpu "num=1"
+#BSUB -R "rusage[mem=4GB,tmp=1024]"
+#BSUB -W 00:05
+#BSUB -o /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-ms-backend-probe.%J.log
+#BSUB -e /home/projects/dharel/nadavt/repos/newt/tdmpc2/logs/lsf/newt-ms-backend-probe.%J.log
+
+#BSUB -app nvidia-gpu
+#BSUB -env "LSB_CONTAINER_IMAGE=ops:5000/newt:1.0.2"
+
+set -euo pipefail
+cd /home/projects/dharel/nadavt/repos/newt/tdmpc2
+
+export XDG_RUNTIME_DIR=/tmp
+unset DISPLAY || true
+
+echo "HOST=$(hostname)"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
+echo
+
+python - <<'PY'
+import inspect
+import mani_skill
+from mani_skill.envs.utils.system import backend as b
+
+print("mani_skill:", mani_skill.__version__ if hasattr(mani_skill, "__version__") else "<no __version__>")
+print("backend module:", b.__file__)
+print()
+
+for fn_name in ["parse_backend_device_id", "parse_sim_and_render_backend"]:
+    fn = getattr(b, fn_name, None)
+    print("=" * 80)
+    print(fn_name, "source:")
+    print("=" * 80)
+    if fn is None:
+        print("<missing>")
+    else:
+        print(inspect.getsource(fn))
+    print()
+PY
+
+

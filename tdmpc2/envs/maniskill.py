@@ -288,7 +288,6 @@ MANISKILL_TASKS = {
 	),
 }
 
-
 class ManiSkillWrapper(gym.Wrapper):
 	def __init__(self, env, cfg):
 		super().__init__(env)
@@ -404,8 +403,41 @@ def make_env(cfg):
 	)
 	if not render_mode:
 		make_kwargs['render_backend'] = "none"
+	else:
+		# When recording videos, ManiSkill expects a *string* backend. Using None crashes.
+		# In LSF containers, CUDA_VISIBLE_DEVICES typically remaps the allocated GPU to
+		# a single visible device, i.e. the correct CUDA index is almost always "cuda:0"
+		# regardless of the physical GPU index on the host.
+		#
+		# Default to CPU rendering under LSF to avoid a common SAPIEN failure when
+		# CUDA_VISIBLE_DEVICES remaps GPUs but Vulkan enumerates all physical devices:
+		#   RuntimeError: Failed to find a supported physical device "cuda:0"
+		#
+		# This is slower, but eval videos are short (often 1 step) and reliability matters.
+		default_backend = "sapien_cpu" if os.environ.get("LSB_JOBID") else "cuda:0"
+		# Allow overriding for debugging via env var.
+		make_kwargs['render_backend'] = os.environ.get("NEWT_MANISKILL_RENDER_BACKEND", default_backend)
 
-	env = gym.make(task_cfg['env'], **make_kwargs)
+	# Try to create the env; if GPU rendering fails with the common SAPIEN physical-device
+	# error, fall back to CPU renderer to avoid crashing eval jobs.
+	try:
+		env = gym.make(task_cfg['env'], **make_kwargs)
+	except RuntimeError as e:
+		msg = str(e)
+		if (
+			render_mode
+			and "Failed to find a supported physical device" in msg
+			and make_kwargs.get("render_backend") != "sapien_cpu"
+		):
+			print(
+				f"[ManiSkill] Render backend {make_kwargs.get('render_backend')!r} failed with: {msg}. "
+				"Falling back to 'sapien_cpu' for video rendering."
+			)
+			make_kwargs["render_backend"] = "sapien_cpu"
+			env = gym.make(task_cfg['env'], **make_kwargs)
+		else:
+			raise
+
 	env = CPUGymWrapper(env, ignore_terminations=True)
 	env = ManiSkillWrapper(env, cfg)
 	env = Timeout(env, max_episode_steps=task_cfg['max_episode_steps'])
